@@ -10,17 +10,24 @@ import type {
   AgentError,
 } from "@/lib/types/agentSchema";
 
-const VISION_SYSTEM_PROMPT = `You are an expert 3D asset analyst. Your role is to analyze a 2D product image and extract detailed information in Korean to help recreate it as a high-quality 3D model.
+const VISION_SYSTEM_PROMPT = `You are an expert 3D asset analyst and computational geometry expert. Your role is to analyze a 2D product image (or 6-view grid) and extract detailed information in Korean to help recreate it as a high-quality, perfectly sharp 3D model.
 
 Analyze the image and respond with a JSON object containing:
-- objectName: The exact type/name of the object in Korean (be specific, e.g. "스포티 러닝화", "모던 원목 의자")
-- productModel: The specific brand and model name in English if identifiable (e.g. "Nike Air Max 90", "iPhone 15 Pro", "LEGO Star Wars Millennium Falcon", "Herman Miller Aeron Chair"). Return null if unrecognizable or a generic item.
-- primaryMaterial: The dominant material in Korean (e.g., "통기성 메쉬 및 고무", "광택 스테인리스")
+- objectName: The exact type/name of the object in Korean (be specific, e.g. "스포티 러닝화", "금속 총기 탄창", "모던 원목 의자")
+- productModel: The specific brand and model name in English if identifiable (e.g. "AR-15 Magazine", "Nike Air Max 90", "iPhone 15 Pro"). Return null if unrecognizable or a generic item.
+- primaryMaterial: The dominant material in Korean (e.g., "무광 마감 강철", "통기성 메쉬 및 고무", "광택 프리미엄 가죽")
 - estimatedColors: Array of hex color codes (most dominant first, max 5)
-- hiddenAreas: Array of areas NOT visible in the image in Korean (e.g., "뒷면 카운터", "밑창 접지면")
-- styleKeywords: Array of style descriptors in Korean (e.g., "스포티", "모던", "경량성")
+- hiddenAreas: Array of areas NOT visible in the image in Korean
+- styleKeywords: Array of style descriptors in Korean
 - confidence: Float 0.0-1.0 for analysis confidence
 - rawDescription: A detailed 2-3 sentence description of the object in Korean
+- parametricBounds: Object containing precise 3D geometric dimensions and contours:
+    - shapeType: One of "box", "cylinder", "sphere", "extruded_polygon", "rounded_prism"
+    - aspectWidth: Float relative width X (e.g. 1.0)
+    - aspectHeight: Float relative height Y (e.g. 2.2)
+    - aspectDepth: Float relative depth Z (e.g. 0.35)
+    - bevelRadius: Float corner chamfer/bevel radius from 0.0 (sharp) to 0.2 (rounded)
+    - polygonPoints: Array of 4 to 8 [x, y] normalized points between -1.0 and 1.0 representing the 2D cross-section contour shape
 
 Respond ONLY with valid JSON. No markdown code blocks.`;
 
@@ -40,6 +47,21 @@ const MOCK_VISION_OUTPUT: VisionAgentOutput = {
   confidence: 0.88,
   rawDescription:
     "경량 메쉬 갑피와 지지력을 향상시키는 오버레이 구조를 갖춘 현대적인 아슬레틱 러닝화입니다. 유선형 실루엣과 쿠셔닝 미드솔이 특징입니다.",
+  parametricBounds: {
+    shapeType: "rounded_prism",
+    aspectWidth: 1.0,
+    aspectHeight: 1.8,
+    aspectDepth: 0.45,
+    bevelRadius: 0.08,
+    polygonPoints: [
+      [-0.8, -1.0],
+      [0.8, -1.0],
+      [0.9, -0.2],
+      [0.6, 0.8],
+      [-0.6, 0.8],
+      [-0.9, -0.2]
+    ]
+  }
 };
 
 // Models confirmed working for this API key (tested 2026-08)

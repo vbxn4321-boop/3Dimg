@@ -29,6 +29,23 @@ export interface VisionAgentInput {
   backgroundRemoved: boolean;
 }
 
+export interface Keypoint3D {
+  label: string;
+  x: number; // normalized -1.0 to 1.0
+  y: number; // normalized -1.0 to 1.0
+  z: number; // normalized -1.0 to 1.0
+}
+
+export interface ParametricBounds {
+  shapeType: "box" | "cylinder" | "sphere" | "extruded_polygon" | "rounded_prism";
+  aspectWidth: number;   // relative scale X (e.g. 1.0)
+  aspectHeight: number;  // relative scale Y (e.g. 2.5)
+  aspectDepth: number;   // relative scale Z (e.g. 0.4)
+  bevelRadius: number;   // corner chamfer/bevel radius (e.g. 0.05)
+  polygonPoints?: Array<[number, number]>; // 2D contour normalized points [-1, 1]
+  keypoints?: Keypoint3D[];
+}
+
 export interface VisionAgentOutput {
   objectName: string;               // e.g. "leather handbag"
   productModel?: string;            // e.g. "Nike Air Max 90", "iPhone 15 Pro" — for 3D model database lookup
@@ -38,6 +55,7 @@ export interface VisionAgentOutput {
   styleKeywords: string[];          // e.g. ["luxury", "vintage", "minimalist"]
   confidence: number;               // 0.0 - 1.0
   rawDescription: string;           // Full LLM analysis text
+  parametricBounds?: ParametricBounds; // Keypoint & parametric bounds for 3D geometry
 }
 
 // ----------------------------
