@@ -117,6 +117,54 @@ async function createMultiViewGridComposite(
   });
 }
 
+async function compressBase64Image(
+  dataUrl: string,
+  maxDim: number = 800,
+  quality: number = 0.8
+): Promise<{ base64: string; mimeType: string }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      let w = img.width;
+      let h = img.height;
+
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, w, h);
+        const compressedUrl = canvas.toDataURL("image/webp", quality);
+        const parts = compressedUrl.split(",");
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        resolve({
+          base64: parts[1],
+          mimeType: mimeMatch ? mimeMatch[1] : "image/webp",
+        });
+      } else {
+        const parts = dataUrl.split(",");
+        resolve({ base64: parts[1], mimeType: "image/png" });
+      }
+    };
+    img.onerror = () => {
+      const parts = dataUrl.split(",");
+      resolve({ base64: parts[1], mimeType: "image/png" });
+    };
+    img.src = dataUrl;
+  });
+}
+
 export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelProps) {
   const [viewSlots, setViewSlots] = useState<ViewSlotState[]>(VIEW_SLOTS_INIT);
   const [editingSlotKey, setEditingSlotKey] = useState<ViewKey | null>(null);
@@ -144,14 +192,17 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       const result = await processImageBackground(file);
       const processedDataUrl = `data:${result.mimeType};base64,${result.imageBase64}`;
 
+      // Compress slot image to avoid payload size overflow
+      const compressed = await compressBase64Image(processedDataUrl, 800, 0.8);
+
       setViewSlots((prev) =>
         prev.map((slot) =>
           slot.key === key
             ? {
                 ...slot,
-                processedPreview: processedDataUrl,
-                base64: result.imageBase64,
-                mimeType: result.mimeType,
+                processedPreview: `data:${compressed.mimeType};base64,${compressed.base64}`,
+                base64: compressed.base64,
+                mimeType: compressed.mimeType,
                 status: "ready" as const,
               }
             : slot
@@ -165,15 +216,16 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
         fr.readAsDataURL(file);
       });
       const previewUrl = `data:${file.type};base64,${fallbackBase64}`;
+      const compressed = await compressBase64Image(previewUrl, 800, 0.8);
 
       setViewSlots((prev) =>
         prev.map((slot) =>
           slot.key === key
             ? {
                 ...slot,
-                processedPreview: previewUrl,
-                base64: fallbackBase64,
-                mimeType: file.type,
+                processedPreview: `data:${compressed.mimeType};base64,${compressed.base64}`,
+                base64: compressed.base64,
+                mimeType: compressed.mimeType,
                 status: "ready" as const,
               }
             : slot
@@ -194,7 +246,8 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       try {
         const composite = await createMultiViewGridComposite(viewSlots);
         if (composite.gridBase64) {
-          compositeGridBase64 = composite.gridBase64;
+          const compressedGrid = await compressBase64Image(composite.previewUrl, 1024, 0.75);
+          compositeGridBase64 = compressedGrid.base64;
         }
       } catch (cErr) {
         console.warn("[UploadPanel] Grid composite failed:", cErr);
@@ -209,7 +262,7 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       multiViewPayload.push({
         view: "composite_grid" as ViewKey,
         base64: compositeGridBase64,
-        mimeType: "image/png",
+        mimeType: "image/webp",
       });
     }
 
