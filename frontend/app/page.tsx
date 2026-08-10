@@ -57,6 +57,7 @@ export default function HomePage() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageMime, setImageMime] = useState<string>("image/jpeg");
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [multiViewImages, setMultiViewImages] = useState<Array<{ view: string; base64: string; mimeType: string }> | undefined>(undefined);
   const [visionOutput, setVisionOutput] = useState<VisionAgentOutput | null>(null);
   const [modelUrl, setModelUrl] = useState<string | undefined>();
   const [sketchfabEmbedUrl, setSketchfabEmbedUrl] = useState<string | undefined>();
@@ -78,11 +79,13 @@ export default function HomePage() {
     base64: string,
     mime: string,
     bgRemoved: boolean,
-    previewUrl: string
+    previewUrl: string,
+    multiViews?: Array<{ view: string; base64: string; mimeType: string }>
   ) => {
     setImageBase64(base64);
     setImageMime(mime);
     setImagePreviewUrl(previewUrl);
+    setMultiViewImages(multiViews);
     setVisionOutput(null);
     setModelUrl(undefined);
     setSketchfabEmbedUrl(undefined);
@@ -100,7 +103,7 @@ export default function HomePage() {
       const res = await fetch("/api/vision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, mimeType: mime, backgroundRemoved: bgRemoved }),
+        body: JSON.stringify({ imageBase64: base64, mimeType: mime, backgroundRemoved: bgRemoved, multiViewImages: multiViews }),
       });
       const data = await res.json();
       if (data.success) {
@@ -138,6 +141,7 @@ export default function HomePage() {
           collectedData,
           imageBase64,
           mimeType: imageMime,
+          multiViewImages,
         }),
       });
 
@@ -179,7 +183,7 @@ export default function HomePage() {
       clearInterval(interval);
       setPhase("error");
     }
-  }, [visionOutput, imageBase64, imageMime]);
+  }, [visionOutput, imageBase64, imageMime, multiViewImages]);
 
   // 3. User requests custom AI 3D model generation (forceAiGen: true)
   const handleGenerateAiModel = useCallback(async () => {
@@ -206,6 +210,7 @@ export default function HomePage() {
           collectedData: lastCollectedData,
           imageBase64,
           mimeType: imageMime,
+          multiViewImages,
           forceAiGen: true,
         }),
       });

@@ -348,7 +348,7 @@ export default function ChatPanel({
           >
             <div className="w-2 h-2 rounded-full" style={{ background: "#10b981" }} />
             <p className="text-xs font-medium" style={{ color: "#10b981" }}>
-              스펙 수집 완료! 3D 생성을 시작합니다...
+              {activeModelSource ? "🎉 3D 모델 준비가 완료되었습니다!" : "스펙 수집 완료! 3D 생성을 시작합니다..."}
             </p>
           </div>
         )}

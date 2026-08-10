@@ -117,30 +117,87 @@ export async function removeBackgroundCanvas(dataUrl: string): Promise<{ base64:
       const bgG = median(gSamples);
       const bgB = median(bSamples);
 
-      // ---- Step 2: Adaptive thresholds based on background brightness ----
-      // Bright/pastel backgrounds need tighter thresholds to avoid over-removal
-      const bgLuma = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
-      const hardThreshold = bgLuma > 200 ? 28 : bgLuma < 50 ? 22 : 35;
-      const softThreshold = hardThreshold + 35;
+      // Convert RGB to CIELAB (L*a*b*) space for human perceptual color accuracy
+      const rgbToLab = (r: number, g: number, b: number): [number, number, number] => {
+        let rN = r / 255, gN = g / 255, bN = b / 255;
+        rN = rN > 0.04045 ? Math.pow((rN + 0.055) / 1.055, 2.4) : rN / 12.92;
+        gN = gN > 0.04045 ? Math.pow((gN + 0.055) / 1.055, 2.4) : gN / 12.92;
+        bN = bN > 0.04045 ? Math.pow((bN + 0.055) / 1.055, 2.4) : bN / 12.92;
 
-      // ---- Step 3: Perceptual weighted colour distance ----
-      // Weights match human eye sensitivity: green > red > blue
-      for (let i = 0; i < data.length; i += 4) {
-        if (data[i + 3] === 0) continue; // Already transparent
+        const x = (rN * 0.4124 + gN * 0.3576 + bN * 0.1805) * 100 / 95.047;
+        const y = (rN * 0.2126 + gN * 0.7152 + bN * 0.0722) * 100 / 100.000;
+        const z = (rN * 0.0193 + gN * 0.1192 + bN * 0.9505) * 100 / 108.883;
 
-        const dr = data[i]     - bgR;
-        const dg = data[i + 1] - bgG;
-        const db = data[i + 2] - bgB;
+        const fx = x > 0.008856 ? Math.cbrt(x) : 7.787 * x + 16 / 116;
+        const fy = y > 0.008856 ? Math.cbrt(y) : 7.787 * y + 16 / 116;
+        const fz = z > 0.008856 ? Math.cbrt(z) : 7.787 * z + 16 / 116;
 
-        // Weighted Euclidean distance in perceptual RGB
-        const dist = Math.sqrt(0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db);
+        return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+      };
 
-        if (dist < hardThreshold) {
-          data[i + 3] = 0; // Fully transparent
-        } else if (dist < softThreshold) {
-          // Smooth feathering on edges
-          const alpha = ((dist - hardThreshold) / (softThreshold - hardThreshold)) * 255;
-          data[i + 3] = Math.min(data[i + 3], Math.round(alpha));
+      const [bgL, bgA, bgB_lab] = rgbToLab(bgR, bgG, bgB);
+
+      // Adaptive thresholds in Delta E (CIELAB)
+      const hardThreshold = bgL > 80 ? 12 : bgL < 20 ? 10 : 15;
+      const softThreshold = hardThreshold + 18;
+
+      // ---- Step 2: Perceptual Delta-E Color Distance in CIELAB space ----
+      const alphaMask = new Uint8Array(width * height);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          if (data[i + 3] === 0) continue;
+
+          const [L, a, b_lab] = rgbToLab(data[i], data[i + 1], data[i + 2]);
+          const dL = L - bgL;
+          const da = a - bgA;
+          const db = b_lab - bgB_lab;
+
+          // Delta-E Euclidean distance in L*a*b* space
+          const deltaE = Math.sqrt(dL * dL + da * da + db * db);
+
+          if (deltaE < hardThreshold) {
+            data[i + 3] = 0;
+            alphaMask[y * width + x] = 0;
+          } else if (deltaE < softThreshold) {
+            const alpha = ((deltaE - hardThreshold) / (softThreshold - hardThreshold)) * 255;
+            const finalAlpha = Math.min(data[i + 3], Math.round(alpha));
+            data[i + 3] = finalAlpha;
+            alphaMask[y * width + x] = finalAlpha;
+          } else {
+            alphaMask[y * width + x] = data[i + 3];
+          }
+        }
+      }
+
+      // ---- Step 3: Edge Anti-Aliasing & Alpha Smoothing (Feathering) ----
+      // 3x3 alpha smoothing box filter to eliminate stair-stepped jagged pixel edges
+      const smoothedAlpha = new Uint8Array(width * height);
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = y * width + x;
+          const currentA = alphaMask[idx];
+
+          if (currentA > 0 && currentA < 255) {
+            let sum = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                sum += alphaMask[(y + dy) * width + (x + dx)];
+              }
+            }
+            smoothedAlpha[idx] = Math.round(sum / 9);
+          } else {
+            smoothedAlpha[idx] = currentA;
+          }
+        }
+      }
+
+      // Apply smoothed alpha back to image data
+      for (let i = 0; i < alphaMask.length; i++) {
+        const pixIdx = i * 4 + 3;
+        if (data[pixIdx] > 0 && data[pixIdx] < 255) {
+          data[pixIdx] = smoothedAlpha[i];
         }
       }
 

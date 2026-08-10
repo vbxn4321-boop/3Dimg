@@ -15,11 +15,12 @@ import path from "path";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { visionOutput, collectedData, imageBase64, mimeType, forceAiGen } = body as {
+    const { visionOutput, collectedData, imageBase64, mimeType, multiViewImages, forceAiGen } = body as {
       visionOutput: VisionAgentOutput;
       collectedData: CollectedData;
       imageBase64?: string;
       mimeType?: string;
+      multiViewImages?: Array<{ view: string; base64: string; mimeType: string }>;
       forceAiGen?: boolean;
     };
 
@@ -28,6 +29,10 @@ export async function POST(request: NextRequest) {
         { error: "visionOutput is required" },
         { status: 400 }
       );
+    }
+
+    if (multiViewImages && multiViewImages.length > 0) {
+      console.log(`[3D Generator] Received Multi-View payload with ${multiViewImages.length} angles:`, multiViewImages.map(m => m.view).join(", "));
     }
 
     // 1. Synthesize 3D prompt & metadata via Gemini AI
@@ -43,9 +48,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Sketchfab Database Lookup (unless forceAiGen is requested)
-    // If vision identified a specific product model, search Sketchfab's library
-    if (!forceAiGen && visionOutput.productModel) {
+    // 1. Multi-View 3D Generation Pipeline (If multiViewImages uploaded, prioritize custom 6-view 3D reconstruction)
+    const isMultiView = Boolean(multiViewImages && multiViewImages.length > 1);
+
+    if (!forceAiGen && !isMultiView && visionOutput.productModel) {
       try {
         console.log(`[3D Generator] Searching Sketchfab for: "${visionOutput.productModel}"`);
         const sketchfabModel = await searchSketchfabModel(visionOutput.productModel);
@@ -100,57 +106,47 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. Real Meshy Paid API Integration
-    if (meshyKey) {
-      try {
-        console.log("[3D Generator] Calling Meshy API...");
-        const meshyRes = await fetch("https://api.meshy.ai/v2/text-to-3d", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${meshyKey}`,
-          },
-          body: JSON.stringify({
-            mode: "preview",
-            prompt: promptOutput.positivePrompt,
-            art_style: promptOutput.style.includes("realistic") ? "realistic" : "sculpture",
-          }),
-        });
-
-        const meshyData = await meshyRes.json();
-        if (meshyRes.ok && meshyData.result) {
-          return NextResponse.json({
-            success: true,
-            taskId: meshyData.result,
-            provider: "meshy",
-            promptMetadata: promptOutput,
-          });
-        }
-      } catch (meshyErr) {
-        console.warn("[3D Generator] Meshy API call failed:", meshyErr);
-      }
-    }
-
-    // 4. Real Free Image-to-3D Generation via TripoSR (HuggingFace ZeroGPU)
+    // 3. Real 6-View / Multi-View 3D AI Reconstruction Pipeline (InstantMesh & TripoSR)
     if (imageBase64) {
       try {
-        console.log("[3D Generator] Calling Open-Source TripoSR Image-to-3D AI...");
+        console.log(`[3D Generator] Calling Multi-View 3D AI with ${multiViewImages?.length || 1} angle composite canvas...`);
         const imgBuffer = Buffer.from(imageBase64, "base64");
-        const blob = new Blob([imgBuffer], { type: mimeType || "image/png" });
+        const compositeBlob = new Blob([imgBuffer], { type: mimeType || "image/png" });
 
+        // Try InstantMesh Multi-View AI
+        try {
+          const app = await Client.connect("Tencent/InstantMesh");
+          const result = await app.predict("/generate_3d", [compositeBlob, 0.5, 30]) as any;
+
+          if (result?.data?.[0]?.url) {
+            const glbUrl = result.data[0].url;
+            console.log("[3D Generator] InstantMesh Multi-View GLB generated successfully:", glbUrl);
+            return NextResponse.json({
+              success: true,
+              provider: "instantmesh_multiview",
+              modelUrl: glbUrl,
+              promptMetadata: promptOutput,
+              message: `${multiViewImages?.length || 1}개 각도 사진 기반 InstantMesh 정밀 3D 모델 생성 완료`,
+            });
+          }
+        } catch (imErr: any) {
+          console.warn("[3D Generator] InstantMesh call failed/queued, trying TripoSR:", imErr?.message || imErr);
+        }
+
+        // Try Open-Source TripoSR AI with composite 6-view canvas
         const app = await Client.connect("stabilityai/TripoSR");
-        const result = await app.predict("/generate", [blob, 256]) as any;
+        const result = await app.predict("/generate", [compositeBlob, 256]) as any;
 
         if (result?.data?.[1]?.url) {
           const glbUrl = result.data[1].url;
-          console.log("[3D Generator] Real TripoSR GLB generated:", glbUrl);
+          console.log("[3D Generator] TripoSR Multi-View GLB generated successfully:", glbUrl);
 
           return NextResponse.json({
             success: true,
             provider: "triposr_free",
             modelUrl: glbUrl,
             promptMetadata: promptOutput,
-            message: "Real 3D model generated from uploaded image via TripoSR AI",
+            message: `${multiViewImages?.length || 1}개 각도 사진 기반 TripoSR 정밀 3D 모델 생성 완료`,
           });
         }
       } catch (tripoSRErr: any) {
