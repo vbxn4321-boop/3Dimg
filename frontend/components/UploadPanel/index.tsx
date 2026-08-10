@@ -40,13 +40,16 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       onImageReady(result.imageBase64, result.mimeType, result.backgroundRemoved, processedDataUrl);
     } catch (err) {
       console.error("Upload error:", err);
-      // Fallback: use original
-      const buffer = await file.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-      const previewUrl = `data:${file.type};base64,${base64}`;
+      // Fallback: use original image via FileReader (safe for large files)
+      const fallbackBase64 = await new Promise<string>((res) => {
+        const fr = new FileReader();
+        fr.onload = () => res((fr.result as string).split(",")[1]);
+        fr.readAsDataURL(file);
+      });
+      const previewUrl = `data:${file.type};base64,${fallbackBase64}`;
       setProcessedPreview(previewUrl);
       setStatus("ready");
-      onImageReady(base64, file.type as any, false, previewUrl);
+      onImageReady(fallbackBase64, file.type as any, false, previewUrl);
     }
   }, [onImageReady]);
 

@@ -8,17 +8,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { runPromptAgent } from "@/lib/agents/promptAgent";
 import type { VisionAgentOutput, CollectedData } from "@/lib/types/agentSchema";
 import { Client } from "@gradio/client";
+import { searchSketchfabModel } from "@/lib/utils/sketchfabSearch";
 import fs from "fs";
 import path from "path";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { visionOutput, collectedData, imageBase64, mimeType } = body as {
+    const { visionOutput, collectedData, imageBase64, mimeType, forceAiGen } = body as {
       visionOutput: VisionAgentOutput;
       collectedData: CollectedData;
       imageBase64?: string;
       mimeType?: string;
+      forceAiGen?: boolean;
     };
 
     if (!visionOutput) {
@@ -39,6 +41,30 @@ export async function POST(request: NextRequest) {
         { error: "Failed to generate 3D prompt", details: promptError?.message },
         { status: 500 }
       );
+    }
+
+    // 1. Sketchfab Database Lookup (unless forceAiGen is requested)
+    // If vision identified a specific product model, search Sketchfab's library
+    if (!forceAiGen && visionOutput.productModel) {
+      try {
+        console.log(`[3D Generator] Searching Sketchfab for: "${visionOutput.productModel}"`);
+        const sketchfabModel = await searchSketchfabModel(visionOutput.productModel);
+        if (sketchfabModel) {
+          console.log(`[3D Generator] Sketchfab match found: "${sketchfabModel.name}" (${sketchfabModel.uid})`);
+          return NextResponse.json({
+            success: true,
+            provider: "sketchfab",
+            sketchfabUid: sketchfabModel.uid,
+            sketchfabEmbedUrl: sketchfabModel.embedUrl,
+            sketchfabViewerUrl: sketchfabModel.viewerUrl,
+            sketchfabModelName: sketchfabModel.name,
+            promptMetadata: promptOutput,
+            message: `Sketchfab 데이터베이스에서 "${sketchfabModel.name}" 3D 모델을 찾았습니다`,
+          });
+        }
+      } catch (sfErr) {
+        console.warn("[3D Generator] Sketchfab search failed:", sfErr);
+      }
     }
 
     const tripoKey = process.env.TRIPO3D_API_KEY;

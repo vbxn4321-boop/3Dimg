@@ -31,6 +31,7 @@ export interface VisionAgentInput {
 
 export interface VisionAgentOutput {
   objectName: string;               // e.g. "leather handbag"
+  productModel?: string;            // e.g. "Nike Air Max 90", "iPhone 15 Pro" — for 3D model database lookup
   primaryMaterial: string;          // e.g. "genuine leather"
   estimatedColors: string[];        // e.g. ["#3B1F0A", "#5C3317"]
   hiddenAreas: string[];            // e.g. ["back strap detail", "interior lining"]

@@ -59,8 +59,19 @@ export default function HomePage() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [visionOutput, setVisionOutput] = useState<VisionAgentOutput | null>(null);
   const [modelUrl, setModelUrl] = useState<string | undefined>();
+  const [sketchfabEmbedUrl, setSketchfabEmbedUrl] = useState<string | undefined>();
+  const [sketchfabViewerUrl, setSketchfabViewerUrl] = useState<string | undefined>();
+  const [sketchfabModelName, setSketchfabModelName] = useState<string | undefined>();
   const [genProgress, setGenProgress] = useState(0);
   const [promptMetadata, setPromptMetadata] = useState<ThreeDPromptAgentOutput | null>(null);
+  const [lastCollectedData, setLastCollectedData] = useState<CollectedData | null>(null);
+  const [showChoiceModal, setShowChoiceModal] = useState<boolean>(false);
+  const [activeModelSource, setActiveModelSource] = useState<"sketchfab" | "ai" | null>(null);
+  const [pendingSketchfabData, setPendingSketchfabData] = useState<{
+    embedUrl: string;
+    viewerUrl: string;
+    modelName: string;
+  } | null>(null);
 
   // 1. Image uploaded & background removed
   const handleImageReady = useCallback(async (
@@ -74,6 +85,12 @@ export default function HomePage() {
     setImagePreviewUrl(previewUrl);
     setVisionOutput(null);
     setModelUrl(undefined);
+    setSketchfabEmbedUrl(undefined);
+    setSketchfabViewerUrl(undefined);
+    setSketchfabModelName(undefined);
+    setPendingSketchfabData(null);
+    setActiveModelSource(null);
+    setShowChoiceModal(false);
     setPromptMetadata(null);
     setGenProgress(0);
     setPhase("analyzing");
@@ -99,6 +116,7 @@ export default function HomePage() {
 
   // 2. Dialogue complete → trigger 3D generation API pipeline
   const handleDialogueComplete = useCallback(async (collectedData: CollectedData) => {
+    setLastCollectedData(collectedData);
     setPhase("generating");
 
     let progress = 0;
@@ -131,6 +149,75 @@ export default function HomePage() {
         if (data.promptMetadata) {
           setPromptMetadata(data.promptMetadata);
         }
+        // Sketchfab embed found: set embed URL to preload in background layer, present choice card in chat window
+        if (data.provider === "sketchfab" && data.sketchfabEmbedUrl) {
+          setSketchfabEmbedUrl(data.sketchfabEmbedUrl);
+          setSketchfabViewerUrl(data.sketchfabViewerUrl);
+          setSketchfabModelName(data.sketchfabModelName);
+          setModelUrl(undefined);
+          setShowChoiceModal(true);
+          setActiveModelSource(null); // Keep activeModelSource null so viewer shows choice overlay while preloading
+          setPhase("complete");
+        } else if (data.modelUrl) {
+          setModelUrl(data.modelUrl);
+          setSketchfabEmbedUrl(undefined);
+          setSketchfabViewerUrl(undefined);
+          setActiveModelSource("ai");
+          setPhase("complete");
+        } else {
+          const dynamicModel = selectModelForVision(visionOutput?.objectName);
+          setModelUrl(dynamicModel);
+          setSketchfabEmbedUrl(undefined);
+          setSketchfabViewerUrl(undefined);
+          setActiveModelSource("ai");
+          setPhase("complete");
+        }
+      } else {
+        setPhase("error");
+      }
+    } catch {
+      clearInterval(interval);
+      setPhase("error");
+    }
+  }, [visionOutput, imageBase64, imageMime]);
+
+  // 3. User requests custom AI 3D model generation (forceAiGen: true)
+  const handleGenerateAiModel = useCallback(async () => {
+    if (!visionOutput) return;
+    setPhase("generating");
+    setGenProgress(0);
+
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 12 + 4;
+      if (progress >= 90) {
+        setGenProgress(90);
+      } else {
+        setGenProgress(Math.round(progress));
+      }
+    }, 400);
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          visionOutput,
+          collectedData: lastCollectedData,
+          imageBase64,
+          mimeType: imageMime,
+          forceAiGen: true,
+        }),
+      });
+
+      const data = await res.json();
+      clearInterval(interval);
+
+      if (data.success) {
+        setGenProgress(100);
+        if (data.promptMetadata) {
+          setPromptMetadata(data.promptMetadata);
+        }
         if (data.modelUrl) {
           setModelUrl(data.modelUrl);
         } else {
@@ -145,7 +232,22 @@ export default function HomePage() {
       clearInterval(interval);
       setPhase("error");
     }
-  }, [visionOutput, imageBase64, imageMime]);
+  }, [visionOutput, lastCollectedData, imageBase64, imageMime]);
+
+  const handleSelectSketchfab = useCallback(() => {
+    setActiveModelSource("sketchfab");
+    setShowChoiceModal(false);
+    setPhase("complete");
+  }, []);
+
+  const handleSelectAiGen = useCallback(() => {
+    setShowChoiceModal(false);
+    setActiveModelSource("ai");
+    setPhase("complete");
+    if (!modelUrl) {
+      handleGenerateAiModel();
+    }
+  }, [modelUrl, handleGenerateAiModel]);
 
   const steps = [
     { id: 1, label: "이미지 업로드", done: phase !== "idle" },
@@ -316,6 +418,11 @@ export default function HomePage() {
                   visionOutput={visionOutput}
                   onComplete={handleDialogueComplete}
                   isAnalyzing={phase === "analyzing"}
+                  sketchfabModelName={sketchfabModelName}
+                  showChoice={showChoiceModal}
+                  activeModelSource={activeModelSource}
+                  onSelectSketchfab={handleSelectSketchfab}
+                  onSelectAiGen={handleSelectAiGen}
                 />
               </div>
             </div>
@@ -345,9 +452,15 @@ export default function HomePage() {
         <div className="flex-1 min-w-0 min-h-0">
           <ThreeDViewer
             modelUrl={modelUrl}
+            sketchfabEmbedUrl={sketchfabEmbedUrl}
+            sketchfabViewerUrl={sketchfabViewerUrl}
+            sketchfabModelName={sketchfabModelName}
             phase={phase}
             generationProgress={genProgress}
+            activeModelSource={activeModelSource}
+            onSourceChange={setActiveModelSource}
             onLoadSample={handleLoadSample}
+            onGenerateAiModel={handleGenerateAiModel}
           />
         </div>
       </div>

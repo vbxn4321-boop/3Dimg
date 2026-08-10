@@ -14,6 +14,7 @@ const VISION_SYSTEM_PROMPT = `You are an expert 3D asset analyst. Your role is t
 
 Analyze the image and respond with a JSON object containing:
 - objectName: The exact type/name of the object in Korean (be specific, e.g. "스포티 러닝화", "모던 원목 의자")
+- productModel: The specific brand and model name in English if identifiable (e.g. "Nike Air Max 90", "iPhone 15 Pro", "LEGO Star Wars Millennium Falcon", "Herman Miller Aeron Chair"). Return null if unrecognizable or a generic item.
 - primaryMaterial: The dominant material in Korean (e.g., "통기성 메쉬 및 고무", "광택 스테인리스")
 - estimatedColors: Array of hex color codes (most dominant first, max 5)
 - hiddenAreas: Array of areas NOT visible in the image in Korean (e.g., "뒷면 카운터", "밑창 접지면")
@@ -26,6 +27,7 @@ Respond ONLY with valid JSON. No markdown code blocks.`;
 // ----- Mock data for development without API key -----
 const MOCK_VISION_OUTPUT: VisionAgentOutput = {
   objectName: "모던 러닝 스니커즈",
+  productModel: null as any,
   primaryMaterial: "통기성 메쉬 갑피와 고무 밑창",
   estimatedColors: ["#F5F5F5", "#2563EB", "#1E293B", "#94A3B8"],
   hiddenAreas: [

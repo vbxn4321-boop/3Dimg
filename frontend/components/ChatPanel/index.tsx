@@ -8,9 +8,23 @@ interface ChatPanelProps {
   visionOutput: VisionAgentOutput | null;
   onComplete: (collectedData: CollectedData) => void;
   isAnalyzing?: boolean;
+  sketchfabModelName?: string;
+  showChoice?: boolean;
+  activeModelSource?: "sketchfab" | "ai" | null;
+  onSelectSketchfab?: () => void;
+  onSelectAiGen?: () => void;
 }
 
-export default function ChatPanel({ visionOutput, onComplete, isAnalyzing }: ChatPanelProps) {
+export default function ChatPanel({
+  visionOutput,
+  onComplete,
+  isAnalyzing,
+  sketchfabModelName,
+  showChoice,
+  activeModelSource,
+  onSelectSketchfab,
+  onSelectAiGen,
+}: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -245,7 +259,89 @@ export default function ChatPanel({ visionOutput, onComplete, isAnalyzing }: Cha
           </div>
         )}
 
-        {isComplete && (
+        {/* Interactive Choice Card when Sketchfab model is found */}
+        {showChoice && (
+          <div className="p-3.5 rounded-2xl border border-indigo-500/30 bg-slate-900/90 shadow-xl space-y-3 animate-fade-in-up my-2">
+            <div className="flex items-center gap-2 text-xs font-semibold text-indigo-300">
+              <Sparkles size={14} className="text-amber-400" />
+              <span>3D 생성 방식을 선택해 주세요</span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              이 제품에 어울리는 완성형 3D 모델을 찾았습니다! 아래 두 가지 방법 중 하나를 선택해 주세요:
+            </p>
+
+            <div className="grid grid-cols-1 gap-2 pt-1">
+              {/* Option 1: Sketchfab DB Model */}
+              <button
+                onClick={onSelectSketchfab}
+                className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/40 transition-all text-left group cursor-pointer"
+              >
+                <div className="flex items-center justify-between font-semibold text-xs text-emerald-400">
+                  <span>📦 Sketchfab 완성형 DB 모델</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 font-bold">추천 (고화질)</span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">
+                  {sketchfabModelName ? `"${sketchfabModelName}" — ` : ""}실물과 동일한 정교한 디테일의 3D 에셋
+                </p>
+              </button>
+
+              {/* Option 2: AI Custom Generation */}
+              <button
+                onClick={onSelectAiGen}
+                className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-950/20 hover:bg-indigo-900/40 transition-all text-left group cursor-pointer"
+              >
+                <div className="flex items-center justify-between font-semibold text-xs text-indigo-300">
+                  <span>✨ AI 맞춤 3D 새로 생성 (TripoSR)</span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  답변하신 재질, 광택, 스타일 옵션을 직접 반영하여 3D 모델 자동 생성
+                </p>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Dynamic Alternative Option Banner when a model is active in viewer */}
+        {!showChoice && activeModelSource === "sketchfab" && (
+          <div className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-950/20 text-xs space-y-2.5 animate-fade-in-up my-2">
+            <div className="flex items-center justify-between text-indigo-300 font-semibold">
+              <span className="flex items-center gap-1.5">
+                📦 현재 Sketchfab DB 모델 표시 중
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              대화에서 선택한 스타일/재질 스펙을 반영한 AI 생성 3D 모델로 바꾸시겠어요?
+            </p>
+            <button
+              onClick={onSelectAiGen}
+              className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+            >
+              <Sparkles size={13} className="text-amber-400" />
+              <span>✨ AI 맞춤 3D 모델 새로 생성하기 (TripoSR)</span>
+            </button>
+          </div>
+        )}
+
+        {!showChoice && activeModelSource === "ai" && sketchfabModelName && (
+          <div className="p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 text-xs space-y-2.5 animate-fade-in-up my-2">
+            <div className="flex items-center justify-between text-emerald-300 font-semibold">
+              <span className="flex items-center gap-1.5">
+                ✨ 현재 AI 생성 3D 모델 표시 중
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              실물과 똑같은 정교한 완성형 Sketchfab DB 모델로 전환할 수 있습니다.
+            </p>
+            <button
+              onClick={onSelectSketchfab}
+              className="w-full py-2 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+            >
+              <span>📦 Sketchfab 완성형 DB 모델로 바꾸기</span>
+            </button>
+          </div>
+        )}
+
+        {isComplete && !showChoice && (
           <div
             className="flex items-center gap-2 p-3 rounded-lg animate-fade-in-up"
             style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)" }}
