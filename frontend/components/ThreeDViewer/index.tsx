@@ -13,6 +13,9 @@ import * as THREE from "three";
 import { GLTFExporter, RoundedBoxGeometry } from "three-stdlib";
 import { Download, RotateCcw, Sun, AlertTriangle, Sparkles } from "lucide-react";
 import type { VisionAgentOutput } from "@/lib/types/agentSchema";
+import { createCroppedTexture } from "@/lib/three/textureProcessor";
+import { generateVisualHullGeometry } from "@/lib/three/visualHullBuilder";
+import { extractContourShape } from "@/lib/three/contourExtruder";
 
 // ----- Error Boundary to prevent React white screen crashes -----
 interface ErrorBoundaryProps {
@@ -128,199 +131,8 @@ function PlaceholderMesh({ phase }: { phase: string }) {
   );
 }
 
-// ----- Texture Mapped Ultra-HD 6-Face Box Component -----
-/** 투명 여백 및 Gemini Photogrammetry 크롭 좌표(tightCrops)를 자동 반영하여 HD 선명 텍스처를 생성합니다 */
-function createCroppedTexture(
-  dataUrl: string,
-  loader: THREE.TextureLoader,
-  tightCrop?: [number, number, number, number]
-): THREE.Texture {
-  const tex = loader.load(dataUrl, (texture) => {
-    const img = texture.image as HTMLImageElement;
-    if (!img || !img.width || !img.height) return;
-
-    try {
-      let minX = 0, minY = 0, maxX = img.width, maxY = img.height;
-
-      // Gemini가 감지한 손/배경 제외 정밀 크롭 영역이 있는 경우 우선 적용
-      if (tightCrop && Array.isArray(tightCrop) && tightCrop.length === 4) {
-        minX = Math.floor(tightCrop[0] * img.width);
-        minY = Math.floor(tightCrop[1] * img.height);
-        maxX = Math.ceil(tightCrop[2] * img.width);
-        maxY = Math.ceil(tightCrop[3] * img.height);
-      } else {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (!ctx) return;
-
-        ctx.drawImage(img, 0, 0);
-        const imgData = ctx.getImageData(0, 0, img.width, img.height);
-        const data = imgData.data;
-
-        let fMinX = img.width, fMinY = img.height, fMaxX = 0, fMaxY = 0;
-        let found = false;
-
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            const alpha = data[(y * img.width + x) * 4 + 3];
-            if (alpha > 20) {
-              if (x < fMinX) fMinX = x;
-              if (x > fMaxX) fMaxX = x;
-              if (y < fMinY) fMinY = y;
-              if (y > fMaxY) fMaxY = y;
-              found = true;
-            }
-          }
-        }
-
-        if (found && fMaxX > fMinX && fMaxY > fMinY) {
-          minX = fMinX;
-          minY = fMinY;
-          maxX = fMaxX;
-          maxY = fMaxY;
-        }
-      }
-
-      const cropW = Math.max(10, maxX - minX);
-      const cropH = Math.max(10, maxY - minY);
-      const croppedCanvas = document.createElement("canvas");
-      croppedCanvas.width = cropW;
-      croppedCanvas.height = cropH;
-      const cCtx = croppedCanvas.getContext("2d", { willReadFrequently: true });
-      if (cCtx) {
-        cCtx.imageSmoothingEnabled = true;
-        cCtx.imageSmoothingQuality = "high";
-        cCtx.drawImage(img, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
-
-        try {
-          const imgData = cCtx.getImageData(0, 0, cropW, cropH);
-          const data = imgData.data;
-
-          // Calculate average color of non-transparent product pixels
-          let sumR = 0, sumG = 0, sumB = 0, count = 0;
-          for (let i = 0; i < data.length; i += 4) {
-            if (data[i + 3] > 100) {
-              sumR += data[i];
-              sumG += data[i + 1];
-              sumB += data[i + 2];
-              count++;
-            }
-          }
-
-          const bgR = count > 0 ? Math.round(sumR / count) : 255;
-          const bgG = count > 0 ? Math.round(sumG / count) : 255;
-          const bgB = count > 0 ? Math.round(sumB / count) : 255;
-
-          // Fill transparent corner padding with opaque body color so 3D mesh corners don't get cut out
-          for (let i = 0; i < data.length; i += 4) {
-            if (data[i + 3] < 120) {
-              data[i] = bgR;
-              data[i + 1] = bgG;
-              data[i + 2] = bgB;
-              data[i + 3] = 255;
-            }
-          }
-
-          cCtx.putImageData(imgData, 0, 0);
-        } catch {
-          // Fallback if canvas is tainted
-        }
-
-        texture.image = croppedCanvas as any;
-        texture.needsUpdate = true;
-      }
-    } catch {
-      // Fallback
-    }
-  });
-
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.generateMipmaps = true;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.anisotropy = 16;
-  return tex;
-}
-
-/** 이미지 알파 채널에서 2D 실루엣 윤곽선 Shape 생성 함수 */
-function extractContourShape(
-  dataUrl: string | null,
-  targetWidth: number,
-  targetHeight: number,
-  samples: number = 64
-): THREE.Shape | null {
-  if (!dataUrl) return null;
-
-  try {
-    const img = new Image();
-    img.src = dataUrl;
-    if (!img.width || !img.height) return null;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
-
-    ctx.drawImage(img, 0, 0, 128, 128);
-    const imgData = ctx.getImageData(0, 0, 128, 128);
-    const data = imgData.data;
-
-    const points: Array<{ x: number; y: number }> = [];
-    const centerX = 64;
-    const centerY = 64;
-
-    for (let i = 0; i < samples; i++) {
-      const angle = (i / samples) * Math.PI * 2;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-
-      let foundR = 0;
-      for (let r = 0; r < 64; r++) {
-        const px = Math.round(centerX + cos * r);
-        const py = Math.round(centerY + sin * r);
-
-        if (px < 0 || px >= 128 || py < 0 || py >= 128) break;
-        const alpha = data[(py * 128 + px) * 4 + 3];
-        if (alpha > 30) {
-          foundR = r;
-        }
-      }
-
-      if (foundR < 5) foundR = 45;
-
-      const normX = (cos * foundR) / 64;
-      const normY = -(sin * foundR) / 64; // Invert Y for Three.js
-      points.push({
-        x: normX * (targetWidth / 2),
-        y: normY * (targetHeight / 2),
-      });
-    }
-
-    if (points.length < 3) return null;
-
-    const shape = new THREE.Shape();
-    shape.moveTo(points[0].x, points[0].y);
-
-    for (let i = 0; i < points.length; i++) {
-      const p1 = points[i];
-      const p2 = points[(i + 1) % points.length];
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
-      shape.quadraticCurveTo(p1.x, p1.y, midX, midY);
-    }
-    shape.closePath();
-    return shape;
-  } catch (err) {
-    console.warn("Contour shape extraction failed:", err);
-    return null;
-  }
-}
-
 // ----- Seamless Solid 3D Product Mesh Generator -----
-/** 6개 사진 텍스처를 유격과 구멍 없이 3D 실물 모형으로 이어서 입히는 고화질 3D 메쉬 생성기 (곡면/베벨/원통/알파실루엣 지원) */
+/** 6개 사진 텍스처를 유격과 구멍 없이 3D 실물 모형으로 이어서 입히는 고화질 3D 메쉬 생성기 (곡면/베벨/원통/알파실루엣/VisualHull 지원) */
 function TextureMappedBoxMesh({
   multiViewImages,
   imageBase64,
@@ -339,12 +151,8 @@ function TextureMappedBoxMesh({
   const meshRef = useRef<THREE.Mesh>(null!);
 
   const primaryColor = visionOutput?.estimatedColors?.[0] || "#ffffff";
-
   const bounds = visionOutput?.parametricBounds;
   const tightCrops = visionOutput?.tightCrops;
-  const w = Math.max(0.4, bounds?.aspectWidth ?? 1.0);
-  const h = Math.max(0.4, bounds?.aspectHeight ?? 1.2);
-  const d = Math.max(0.2, bounds?.aspectDepth ?? 0.4);
 
   const shapeType = (overrideShapeType || bounds?.shapeType || "rounded_box").toLowerCase();
   const bevelRadius = overrideBevelRadius ?? bounds?.bevelRadius ?? 0.08;
@@ -365,13 +173,30 @@ function TextureMappedBoxMesh({
   const topData = findBase64("top") || frontData;
   const bottomData = findBase64("bottom") || frontData;
 
+  // 포토그래메트리(Photogrammetry) 원칙 적용: 
+  // 스마트폰 렌즈의 시야각/원근 왜곡(Lens Distortion & Perspective Foreshortening)이 자동 보정된 
+  // Gemini Vision AI의 정밀 3D 실물 기하학 비율(w, h, d)을 3D 도형 생성의 절대 기준으로 사용합니다.
+  const w = Math.max(0.4, bounds?.aspectWidth ?? 1.0);
+  const h = Math.max(0.4, bounds?.aspectHeight ?? 1.2);
+  const d = Math.max(0.2, bounds?.aspectDepth ?? 0.4);
+
+  const roughness = bounds?.surfaceRoughness ?? 0.25;
+  const metalness = bounds?.surfaceMetalness ?? 0.05;
+
   const materials = useMemo(() => {
+    const getFaceAspect = (viewKey: string) => {
+      if (viewKey === "front" || viewKey === "back") return w / h;
+      if (viewKey === "left" || viewKey === "right") return d / h;
+      if (viewKey === "top" || viewKey === "bottom") return w / d;
+      return w / h;
+    };
+
     const makeFaceMat = (dataUrl: string | null, viewKey: string) => {
       if (!dataUrl) {
         return new THREE.MeshStandardMaterial({
           color: primaryColor,
-          roughness: 0.3,
-          metalness: 0.05,
+          roughness: roughness,
+          metalness: metalness,
           side: THREE.DoubleSide,
         });
       }
@@ -381,8 +206,8 @@ function TextureMappedBoxMesh({
         color: "#ffffff",
         map: tex,
         transparent: false,
-        roughness: 0.25,
-        metalness: 0.05,
+        roughness: roughness,
+        metalness: metalness,
         side: THREE.DoubleSide,
       });
     };
@@ -705,8 +530,8 @@ export default function ThreeDViewer({
                   key={p.id}
                   onClick={() => setLightPreset(p.id as any)}
                   className={`py-1 px-2 rounded text-[11px] font-medium border transition-all cursor-pointer ${lightPreset === p.id
-                      ? "bg-indigo-600 text-white border-indigo-400"
-                      : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
+                    ? "bg-indigo-600 text-white border-indigo-400"
+                    : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
                     }`}
                 >
                   {p.label}
@@ -764,11 +589,10 @@ export default function ThreeDViewer({
                   <button
                     key={s.id}
                     onClick={() => setOverrideShape(s.id as any)}
-                    className={`py-1 px-2 rounded text-[11px] font-medium border transition-all cursor-pointer ${
-                      activeShape === s.id
+                    className={`py-1 px-2 rounded text-[11px] font-medium border transition-all cursor-pointer ${activeShape === s.id
                         ? "bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-500/30"
                         : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
-                    }`}
+                      }`}
                   >
                     {s.label}
                   </button>

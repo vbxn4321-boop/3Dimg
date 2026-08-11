@@ -14,11 +14,13 @@ const SYSTEM_PROMPT = `You are an expert Photogrammetry 3D Vision AI.
 Your task is to analyze up to 6 view images of a physical product (front, back, left, right, top, bottom), perform spatial feature extraction, and return a clean 3D mesh specification.
 
 CRITICAL INSTRUCTIONS:
-1. **Tight Crop Bounding Boxes (tightCrops)**: For EACH view, detect the tight bounding box [minX, minY, maxX, maxY] in normalized 0.0-1.0 coordinates that contains ONLY the main product object.
+1. **Tight Crop Bounding Boxes (tightCrops)**: For EACH view, detect the tight bounding box [minX, minY, maxX, maxY] in normalized 0.0-1.0 coordinates containing ONLY the product object.
    - EXCLUDE any human hands, fingers, desk surfaces, or background padding.
-2. **3D Aspect Ratios**: Compute the exact X (aspectWidth), Y (aspectHeight), Z (aspectDepth) 3D scale ratios across all views.
-3. **3D Geometric Shape (shapeType)**: Identify object shape: "rounded_box" (smartphones, cosmetic cases, rounded boxes), "cylinder" (cans, bottles, cups, tubes), "sphere" (balls, spheres), or "box" (sharp square boxes).
-4. **Corner Curvature (bevelRadius)**: Estimate the rounded corner curvature radius (e.g. 0.15 for AirPods case, 0.05 for wallet, 0.0 for sharp box).
+2. **4-Corner Quad Keypoints (faceCorners)**: For EACH view, detect 4 exact object corner keypoints: topLeft, topRight, bottomLeft, bottomRight in normalized [x, y] 0.0-1.0 coordinates to unwarp camera perspective distortion.
+3. **Lens Distortion Correction & True 3D Physical Aspect Ratios (aspectWidth, aspectHeight, aspectDepth)**: Eliminate camera lens distortion, perspective foreshortening, and angle tilt across all views. Compute the TRUE physical 3D dimension ratios (aspectWidth: X, aspectHeight: Y, aspectDepth: Z).
+4. **3D Geometric Shape (shapeType)**: Identify object shape: "rounded_box" (smartphones, cases, rounded boxes, AirPods), "cylinder" (cans, bottles, cups), "sphere" (balls, spheres), or "box" (sharp square boxes).
+5. **Corner Curvature (bevelRadius)**: Estimate rounded corner curvature radius (0.0 to 0.25).
+6. **PBR Surface Material (surfaceRoughness, surfaceMetalness)**: Estimate surface roughness (0.05=glossy, 0.80=matte) and metalness (0.0=plastic/leather, 0.9=metallic).
 
 Return JSON matching this EXACT schema:
 {
@@ -31,7 +33,9 @@ Return JSON matching this EXACT schema:
     "aspectWidth": 1.0,
     "aspectHeight": 1.2,
     "aspectDepth": 0.4,
-    "bevelRadius": 0.12
+    "bevelRadius": 0.12,
+    "surfaceRoughness": 0.25,
+    "surfaceMetalness": 0.05
   },
   "tightCrops": {
     "front": [0.1, 0.1, 0.9, 0.9],
@@ -40,6 +44,14 @@ Return JSON matching this EXACT schema:
     "right": [0.2, 0.1, 0.8, 0.9],
     "top": [0.1, 0.2, 0.9, 0.8],
     "bottom": [0.1, 0.2, 0.9, 0.8]
+  },
+  "faceCorners": {
+    "front": {
+      "topLeft": [0.1, 0.1],
+      "topRight": [0.9, 0.1],
+      "bottomLeft": [0.1, 0.9],
+      "bottomRight": [0.9, 0.9]
+    }
   }
 }
 
@@ -139,7 +151,10 @@ async function callVisionLLM(input: VisionAgentInput): Promise<VisionAgentOutput
           aspectHeight: rawH / maxDim,
           aspectDepth: rawD / maxDim,
           bevelRadius: Number(parsed.parametricBounds?.bevelRadius) ?? 0.08,
+          surfaceRoughness: Number(parsed.parametricBounds?.surfaceRoughness) ?? 0.25,
+          surfaceMetalness: Number(parsed.parametricBounds?.surfaceMetalness) ?? 0.05,
         },
+        faceCorners: parsed.faceCorners || {},
         tightCrops: parsed.tightCrops || {},
       };
 

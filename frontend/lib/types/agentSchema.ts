@@ -43,6 +43,8 @@ export interface ParametricBounds {
   aspectHeight: number;  // relative scale Y (e.g. 2.5)
   aspectDepth: number;   // relative scale Z (e.g. 0.4)
   bevelRadius: number;   // corner chamfer/bevel radius (e.g. 0.05)
+  surfaceRoughness?: number; // PBR surface roughness (0.0 to 1.0)
+  surfaceMetalness?: number; // PBR metalness (0.0 to 1.0)
   polygonPoints?: Array<[number, number]>; // 2D contour normalized points [-1, 1]
   keypoints?: Keypoint3D[];
 }

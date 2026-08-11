@@ -119,8 +119,8 @@ async function createMultiViewGridComposite(
 
 async function compressBase64Image(
   dataUrl: string,
-  maxDim: number = 2048,
-  quality: number = 0.95
+  maxDim: number = 1024,
+  quality: number = 0.85
 ): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -194,8 +194,8 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       const result = await processImageBackground(file);
       const processedDataUrl = `data:${result.mimeType};base64,${result.imageBase64}`;
 
-      // Compress slot image to avoid payload size overflow while preserving 2K texture quality
-      const compressed = await compressBase64Image(processedDataUrl, 2048, 0.95);
+      // Compress slot image to avoid payload size overflow while preserving high texture quality
+      const compressed = await compressBase64Image(processedDataUrl, 1024, 0.85);
 
       setViewSlots((prev) =>
         prev.map((slot) =>
@@ -218,7 +218,7 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
         fr.readAsDataURL(file);
       });
       const previewUrl = `data:${file.type};base64,${fallbackBase64}`;
-      const compressed = await compressBase64Image(previewUrl, 2048, 0.95);
+      const compressed = await compressBase64Image(previewUrl, 1024, 0.85);
 
       setViewSlots((prev) =>
         prev.map((slot) =>

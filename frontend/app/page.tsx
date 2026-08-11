@@ -86,7 +86,25 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: base64, mimeType: mime, backgroundRemoved: bgRemoved, multiViewImages: multiViews }),
       });
-      const data = await res.json();
+
+      if (res.status === 413) {
+        alert("⚠️ 업로드된 이미지의 용량이 너무 큽니다. 이미지 크기(용량)를 줄여서 다시 시도해주세요.");
+        setPhase("idle");
+        setLeftTab("upload");
+        return;
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        console.error("[Page.tsx] /api/vision JSON parse failed (likely 413 Payload Too Large):", jsonErr);
+        alert("⚠️ 업로드된 이미지의 용량이 너무 큽니다. 이미지 크기(용량)를 줄여서 다시 시도해주세요.");
+        setPhase("idle");
+        setLeftTab("upload");
+        return;
+      }
+
       console.log("[Page.tsx] /api/vision result:", data);
       if (data.success) {
         setVisionOutput(data.output);
@@ -98,7 +116,9 @@ export default function HomePage() {
       }
     } catch (err) {
       console.error("[Page.tsx] /api/vision exception:", err);
-      setPhase("error");
+      alert("⚠️ 업로드된 이미지의 용량이 너무 큽니다. 이미지 크기(용량)를 줄여서 다시 시도해주세요.");
+      setPhase("idle");
+      setLeftTab("upload");
     }
   }, []);
 
