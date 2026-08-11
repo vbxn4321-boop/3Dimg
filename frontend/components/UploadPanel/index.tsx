@@ -119,8 +119,8 @@ async function createMultiViewGridComposite(
 
 async function compressBase64Image(
   dataUrl: string,
-  maxDim: number = 800,
-  quality: number = 0.8
+  maxDim: number = 2048,
+  quality: number = 0.95
 ): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -144,6 +144,8 @@ async function compressBase64Image(
       canvas.height = h;
       const ctx = canvas.getContext("2d");
       if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, w, h);
         const compressedUrl = canvas.toDataURL("image/webp", quality);
         const parts = compressedUrl.split(",");
@@ -192,8 +194,8 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       const result = await processImageBackground(file);
       const processedDataUrl = `data:${result.mimeType};base64,${result.imageBase64}`;
 
-      // Compress slot image to avoid payload size overflow
-      const compressed = await compressBase64Image(processedDataUrl, 800, 0.8);
+      // Compress slot image to avoid payload size overflow while preserving 2K texture quality
+      const compressed = await compressBase64Image(processedDataUrl, 2048, 0.95);
 
       setViewSlots((prev) =>
         prev.map((slot) =>
@@ -216,7 +218,7 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
         fr.readAsDataURL(file);
       });
       const previewUrl = `data:${file.type};base64,${fallbackBase64}`;
-      const compressed = await compressBase64Image(previewUrl, 800, 0.8);
+      const compressed = await compressBase64Image(previewUrl, 2048, 0.95);
 
       setViewSlots((prev) =>
         prev.map((slot) =>
@@ -265,6 +267,11 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
         mimeType: "image/webp",
       });
     }
+
+    console.log(
+      `[UploadPanel] Submitting ${multiViewPayload.length} multi-view images to pipeline:`,
+      multiViewPayload.map((m) => `${m.view}: base64 len ${m.base64.length}, mime ${m.mimeType}`)
+    );
 
     onImageReady(
       frontSlot.base64,

@@ -23,32 +23,6 @@ const ThreeDViewer = dynamic(() => import("@/components/ThreeDViewer"), {
   ),
 });
 
-function selectModelForVision(objectName: string = ""): string {
-  const name = objectName.toLowerCase();
-  if (
-    name.includes("헬멧") ||
-    name.includes("helmet") ||
-    name.includes("모자") ||
-    name.includes("로봇") ||
-    name.includes("의자") ||
-    name.includes("단색") ||
-    name.includes("배경")
-  ) {
-    return "/models/sample-helmet.glb";
-  }
-  if (
-    name.includes("오리") ||
-    name.includes("duck") ||
-    name.includes("캐릭터") ||
-    name.includes("인형") ||
-    name.includes("동물") ||
-    name.includes("장난감")
-  ) {
-    return "/models/sample-duck.glb";
-  }
-  return "/models/sample-shoe.glb";
-}
-
 type LeftTab = "upload" | "chat";
 
 export default function HomePage() {
@@ -67,7 +41,7 @@ export default function HomePage() {
   const [promptMetadata, setPromptMetadata] = useState<ThreeDPromptAgentOutput | null>(null);
   const [lastCollectedData, setLastCollectedData] = useState<CollectedData | null>(null);
   const [showChoiceModal, setShowChoiceModal] = useState<boolean>(false);
-  const [activeModelSource, setActiveModelSource] = useState<"sketchfab" | "ai" | null>(null);
+  const [activeModelSource, setActiveModelSource] = useState<"sketchfab" | "ai" | "photo_box" | null>(null);
   const [pendingSketchfabData, setPendingSketchfabData] = useState<{
     embedUrl: string;
     viewerUrl: string;
@@ -82,6 +56,12 @@ export default function HomePage() {
     previewUrl: string,
     multiViews?: Array<{ view: string; base64: string; mimeType: string }>
   ) => {
+    console.log("[Page.tsx] handleImageReady received payload:", {
+      base64Length: base64.length,
+      mime,
+      multiViewsCount: multiViews?.length || 0,
+      views: multiViews?.map((m) => m.view),
+    });
     setImageBase64(base64);
     setImageMime(mime);
     setImagePreviewUrl(previewUrl);
@@ -100,19 +80,24 @@ export default function HomePage() {
     setLeftTab("chat");
 
     try {
+      console.log("[Page.tsx] Fetching /api/vision...");
       const res = await fetch("/api/vision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: base64, mimeType: mime, backgroundRemoved: bgRemoved, multiViewImages: multiViews }),
       });
       const data = await res.json();
+      console.log("[Page.tsx] /api/vision result:", data);
       if (data.success) {
         setVisionOutput(data.output);
-        setPhase("chatting");
+        setActiveModelSource("photo_box");
+        setPhase("complete");
       } else {
+        console.error("[Page.tsx] /api/vision failed:", data.error);
         setPhase("error");
       }
-    } catch {
+    } catch (err) {
+      console.error("[Page.tsx] /api/vision exception:", err);
       setPhase("error");
     }
   }, []);
@@ -169,11 +154,11 @@ export default function HomePage() {
           setActiveModelSource("ai");
           setPhase("complete");
         } else {
-          const dynamicModel = selectModelForVision(visionOutput?.objectName);
-          setModelUrl(dynamicModel);
+          // No external GLB model: keep 6-face photo 3D box active
+          setModelUrl(undefined);
           setSketchfabEmbedUrl(undefined);
           setSketchfabViewerUrl(undefined);
-          setActiveModelSource("ai");
+          setActiveModelSource("photo_box");
           setPhase("complete");
         }
       } else {
@@ -225,9 +210,10 @@ export default function HomePage() {
         }
         if (data.modelUrl) {
           setModelUrl(data.modelUrl);
+          setActiveModelSource("ai");
         } else {
-          const dynamicModel = selectModelForVision(visionOutput?.objectName);
-          setModelUrl(dynamicModel);
+          setModelUrl(undefined);
+          setActiveModelSource("photo_box");
         }
         setPhase("complete");
       } else {
@@ -255,9 +241,8 @@ export default function HomePage() {
   }, [modelUrl, handleGenerateAiModel]);
 
   const steps = [
-    { id: 1, label: "이미지 업로드", done: phase !== "idle" },
-    { id: 2, label: "AI 질의응답", done: phase === "generating" || phase === "complete" },
-    { id: 3, label: "3D 생성", done: phase === "complete" },
+    { id: 1, label: "6면 사진 업로드", done: phase !== "idle" },
+    { id: 2, label: "고화질 3D 모델 생성 완료", done: phase === "complete" },
   ];
 
   const handleLoadSample = useCallback(() => {
@@ -432,7 +417,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            {promptMetadata && phase === "complete" && (
+            {promptMetadata && phase === "complete" && leftTab === "chat" && (
               <div className="mt-3 p-3 rounded-xl border border-indigo-500/20 bg-indigo-950/20 text-xs space-y-1.5 animate-fade-in flex-shrink-0">
                 <div className="flex items-center justify-between font-semibold text-indigo-300">
                   <span>✨ 3D 프롬프트 합성 완료</span>
@@ -466,6 +451,9 @@ export default function HomePage() {
             onSourceChange={setActiveModelSource}
             onLoadSample={handleLoadSample}
             onGenerateAiModel={handleGenerateAiModel}
+            imageBase64={imageBase64}
+            multiViewImages={multiViewImages}
+            visionOutput={visionOutput}
           />
         </div>
       </div>

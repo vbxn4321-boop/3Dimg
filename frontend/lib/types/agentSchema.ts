@@ -27,6 +27,7 @@ export interface VisionAgentInput {
   imageBase64: string;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   backgroundRemoved: boolean;
+  multiViewImages?: Array<{ view: string; base64: string; mimeType: string }>;
 }
 
 export interface Keypoint3D {
@@ -46,16 +47,25 @@ export interface ParametricBounds {
   keypoints?: Keypoint3D[];
 }
 
+export interface FaceCornerQuad {
+  topLeft: [number, number];
+  topRight: [number, number];
+  bottomLeft: [number, number];
+  bottomRight: [number, number];
+}
+
 export interface VisionAgentOutput {
-  objectName: string;               // e.g. "leather handbag"
-  productModel?: string;            // e.g. "Nike Air Max 90", "iPhone 15 Pro" — for 3D model database lookup
-  primaryMaterial: string;          // e.g. "genuine leather"
-  estimatedColors: string[];        // e.g. ["#3B1F0A", "#5C3317"]
-  hiddenAreas: string[];            // e.g. ["back strap detail", "interior lining"]
-  styleKeywords: string[];          // e.g. ["luxury", "vintage", "minimalist"]
-  confidence: number;               // 0.0 - 1.0
-  rawDescription: string;           // Full LLM analysis text
-  parametricBounds?: ParametricBounds; // Keypoint & parametric bounds for 3D geometry
+  objectName: string;
+  productModel?: string;
+  primaryMaterial: string;
+  estimatedColors: string[];
+  hiddenAreas: string[];
+  styleKeywords: string[];
+  confidence: number;
+  rawDescription: string;
+  parametricBounds?: ParametricBounds;
+  faceCorners?: Record<string, FaceCornerQuad>;
+  tightCrops?: Record<string, [number, number, number, number]>; // Normalized [minX, minY, maxX, maxY]
 }
 
 // ----------------------------

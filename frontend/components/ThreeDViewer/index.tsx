@@ -1,17 +1,18 @@
 "use client";
 
 import React, { Suspense, useRef, useState, useMemo, Component, ReactNode } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
-  Environment,
   ContactShadows,
   useGLTF,
   Html,
   Center,
 } from "@react-three/drei";
 import * as THREE from "three";
-import { Download, RotateCcw, ZoomIn, ZoomOut, Sun, Moon, AlertTriangle, Sparkles } from "lucide-react";
+import { GLTFExporter } from "three-stdlib";
+import { Download, RotateCcw, Sun, AlertTriangle, Sparkles } from "lucide-react";
+import type { VisionAgentOutput } from "@/lib/types/agentSchema";
 
 // ----- Error Boundary to prevent React white screen crashes -----
 interface ErrorBoundaryProps {
@@ -54,7 +55,7 @@ class ThreeErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
                 this.setState({ hasError: false });
                 this.props.onReset?.();
               }}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
             >
               다시 시도
             </button>
@@ -82,11 +83,10 @@ function PlaceholderMesh({ phase }: { phase: string }) {
     }
   });
 
-  const isGenerating = phase === "generating";
+  const isGenerating = phase === "generating" || phase === "analyzing";
 
   return (
     <group ref={groupRef}>
-      {/* Core cube */}
       <mesh ref={cubeRef} castShadow>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial
@@ -98,7 +98,6 @@ function PlaceholderMesh({ phase }: { phase: string }) {
         />
       </mesh>
 
-      {/* Orbit ring */}
       <mesh ref={ringRef}>
         <torusGeometry args={[1.4, 0.02, 16, 100]} />
         <meshStandardMaterial
@@ -110,7 +109,6 @@ function PlaceholderMesh({ phase }: { phase: string }) {
         />
       </mesh>
 
-      {/* Corner spheres */}
       {[
         [0.7, 0.7, 0.7],
         [-0.7, 0.7, -0.7],
@@ -130,6 +128,175 @@ function PlaceholderMesh({ phase }: { phase: string }) {
   );
 }
 
+// ----- Texture Mapped Ultra-HD 6-Face Box Component -----
+/** 투명 여백 및 Gemini Photogrammetry 크롭 좌표(tightCrops)를 자동 반영하여 HD 선명 텍스처를 생성합니다 */
+function createCroppedTexture(
+  dataUrl: string,
+  loader: THREE.TextureLoader,
+  tightCrop?: [number, number, number, number]
+): THREE.Texture {
+  const tex = loader.load(dataUrl, (texture) => {
+    const img = texture.image as HTMLImageElement;
+    if (!img || !img.width || !img.height) return;
+
+    try {
+      let minX = 0, minY = 0, maxX = img.width, maxY = img.height;
+
+      // Gemini가 감지한 손/배경 제외 정밀 크롭 영역이 있는 경우 우선 적용
+      if (tightCrop && Array.isArray(tightCrop) && tightCrop.length === 4) {
+        minX = Math.floor(tightCrop[0] * img.width);
+        minY = Math.floor(tightCrop[1] * img.height);
+        maxX = Math.ceil(tightCrop[2] * img.width);
+        maxY = Math.ceil(tightCrop[3] * img.height);
+      } else {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, img.width, img.height);
+        const data = imgData.data;
+
+        let fMinX = img.width, fMinY = img.height, fMaxX = 0, fMaxY = 0;
+        let found = false;
+
+        for (let y = 0; y < img.height; y++) {
+          for (let x = 0; x < img.width; x++) {
+            const alpha = data[(y * img.width + x) * 4 + 3];
+            if (alpha > 20) {
+              if (x < fMinX) fMinX = x;
+              if (x > fMaxX) fMaxX = x;
+              if (y < fMinY) fMinY = y;
+              if (y > fMaxY) fMaxY = y;
+              found = true;
+            }
+          }
+        }
+
+        if (found && fMaxX > fMinX && fMaxY > fMinY) {
+          minX = fMinX;
+          minY = fMinY;
+          maxX = fMaxX;
+          maxY = fMaxY;
+        }
+      }
+
+      const cropW = Math.max(10, maxX - minX);
+      const cropH = Math.max(10, maxY - minY);
+      const croppedCanvas = document.createElement("canvas");
+      croppedCanvas.width = cropW;
+      croppedCanvas.height = cropH;
+      const cCtx = croppedCanvas.getContext("2d");
+      if (cCtx) {
+        cCtx.imageSmoothingEnabled = true;
+        cCtx.imageSmoothingQuality = "high";
+        cCtx.drawImage(img, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+        texture.image = croppedCanvas;
+        texture.needsUpdate = true;
+      }
+    } catch {
+      // Fallback
+    }
+  });
+
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 16;
+  return tex;
+}
+
+// ----- Seamless Solid 3D Product Mesh Generator -----
+/** 6개 사진 텍스처를 유격과 구멍 없이 3D 실물 모형으로 이어서 입히는 고화질 3D 메쉬 생성기 */
+function TextureMappedBoxMesh({
+  multiViewImages,
+  imageBase64,
+  visionOutput,
+  onMeshReady,
+}: {
+  multiViewImages?: Array<{ view: string; base64: string; mimeType: string }>;
+  imageBase64?: string | null;
+  visionOutput?: VisionAgentOutput | null;
+  onMeshReady?: (mesh: THREE.Mesh) => void;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null!);
+
+  const primaryColor = visionOutput?.estimatedColors?.[0] || "#ffffff";
+
+  const bounds = visionOutput?.parametricBounds;
+  const tightCrops = visionOutput?.tightCrops;
+  const w = Math.max(0.4, bounds?.aspectWidth ?? 1.0);
+  const h = Math.max(0.4, bounds?.aspectHeight ?? 1.2);
+  const d = Math.max(0.2, bounds?.aspectDepth ?? 0.4);
+
+  const loader = useMemo(() => new THREE.TextureLoader(), []);
+
+  const findBase64 = (viewKey: string) => {
+    const item = multiViewImages?.find((m) => m.view === viewKey && m.base64);
+    if (item) return `data:${item.mimeType || "image/png"};base64,${item.base64}`;
+    if (viewKey === "front" && imageBase64) return `data:image/png;base64,${imageBase64}`;
+    return null;
+  };
+
+  const frontData = findBase64("front");
+  const backData = findBase64("back") || frontData;
+  const leftData = findBase64("left") || frontData;
+  const rightData = findBase64("right") || frontData;
+  const topData = findBase64("top") || frontData;
+  const bottomData = findBase64("bottom") || frontData;
+
+  const materials = useMemo(() => {
+    const makeFaceMat = (dataUrl: string | null, viewKey: string) => {
+      if (!dataUrl) {
+        return new THREE.MeshStandardMaterial({
+          color: primaryColor,
+          roughness: 0.3,
+          metalness: 0.05,
+          side: THREE.DoubleSide,
+        });
+      }
+      const crop = tightCrops?.[viewKey];
+      const tex = createCroppedTexture(dataUrl, loader, crop);
+      return new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: tex,
+        transparent: false,
+        roughness: 0.25,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+      });
+    };
+
+    // Three.js BoxGeometry face mapping:
+    // 0: Right (+X), 1: Left (-X), 2: Top (+Y), 3: Bottom (-Y), 4: Front (+Z), 5: Back (-Z)
+    return [
+      makeFaceMat(rightData, "right"),
+      makeFaceMat(leftData, "left"),
+      makeFaceMat(topData, "top"),
+      makeFaceMat(bottomData, "bottom"),
+      makeFaceMat(frontData, "front"),
+      makeFaceMat(backData, "back"),
+    ];
+  }, [frontData, backData, leftData, rightData, topData, bottomData, primaryColor, loader, tightCrops]);
+
+  React.useEffect(() => {
+    if (meshRef.current && onMeshReady) {
+      onMeshReady(meshRef.current);
+    }
+  }, [onMeshReady]);
+
+  return (
+    <Center top>
+      <mesh ref={meshRef} material={materials} castShadow receiveShadow>
+        <boxGeometry args={[w, h, d]} />
+      </mesh>
+    </Center>
+  );
+}
+
 // ----- GLB model loader -----
 function GLBModel({ url }: { url: string }) {
   const { scene } = useGLTF(url);
@@ -142,7 +309,6 @@ function GLBModel({ url }: { url: string }) {
   );
 }
 
-// Preload sample GLB for instant rendering
 useGLTF.preload("/models/sample-shoe.glb");
 
 // ----- Loading overlay -----
@@ -179,14 +345,13 @@ function LoadingOverlay({ progress }: { progress: number }) {
             {progress}%
           </span>
         </div>
-        <p className="text-sm text-slate-300 font-medium">3D 모델 생성 중...</p>
-        <p className="text-xs text-slate-500">AI가 열심히 만들고 있어요</p>
+        <p className="text-sm text-slate-300 font-medium">3D 분석 및 모델링 생성 중...</p>
+        <p className="text-xs text-slate-500">Gemini가 6면 공간 비율을 계산하고 있어요</p>
       </div>
     </Html>
   );
 }
 
-// ----- Model Loading Fallback -----
 function GLBLoadingFallback() {
   return (
     <Html center>
@@ -206,10 +371,13 @@ interface ThreeDViewerProps {
   sketchfabModelName?: string;
   phase: string;
   generationProgress?: number;
-  activeModelSource?: "sketchfab" | "ai" | null;
-  onSourceChange?: (source: "sketchfab" | "ai") => void;
+  activeModelSource?: "sketchfab" | "ai" | "photo_box" | null;
+  onSourceChange?: (source: "sketchfab" | "ai" | "photo_box") => void;
   onLoadSample?: () => void;
   onGenerateAiModel?: () => void;
+  imageBase64?: string | null;
+  multiViewImages?: Array<{ view: string; base64: string; mimeType: string }>;
+  visionOutput?: VisionAgentOutput | null;
 }
 
 export default function ThreeDViewer({
@@ -223,17 +391,32 @@ export default function ThreeDViewer({
   onSourceChange,
   onLoadSample,
   onGenerateAiModel,
+  imageBase64,
+  multiViewImages,
+  visionOutput,
 }: ThreeDViewerProps) {
-  const [internalSource, setInternalSource] = useState<"sketchfab" | "ai">("sketchfab");
+  const [internalSource, setInternalSource] = useState<"sketchfab" | "ai" | "photo_box">("photo_box");
   const [lightPreset, setLightPreset] = useState<"studio" | "bright" | "flat" | "warm">("bright");
   const [brightness, setBrightness] = useState<number>(1.3);
   const [shadowOpacity, setShadowOpacity] = useState<number>(0.25);
   const [showLightControls, setShowLightControls] = useState<boolean>(false);
   const controlsRef = useRef<any>(null);
+  const activeMeshRef = useRef<THREE.Mesh | null>(null);
 
-  const effectiveSource = activeModelSource ?? internalSource;
+  const hasPhotos = Boolean(imageBase64 || (multiViewImages && multiViewImages.length > 0));
+  const effectiveSource = activeModelSource ?? (hasPhotos ? "photo_box" : internalSource);
 
-  const handleSourceChange = (src: "sketchfab" | "ai") => {
+  console.log("[ThreeDViewer] Render cycle status:", {
+    phase,
+    activeModelSource,
+    effectiveSource,
+    hasPhotos,
+    multiViewCount: multiViewImages?.length || 0,
+    modelUrl,
+    objectName: visionOutput?.objectName,
+  });
+
+  const handleSourceChange = (src: "sketchfab" | "ai" | "photo_box") => {
     setInternalSource(src);
     onSourceChange?.(src);
   };
@@ -242,18 +425,35 @@ export default function ThreeDViewer({
     controlsRef.current?.reset();
   };
 
+  // Export current 3D Mesh to GLB
   const handleDownload = () => {
-    if (!modelUrl) return;
-    const a = document.createElement("a");
-    a.href = modelUrl;
-    a.download = "model.glb";
-    a.click();
+    if (modelUrl) {
+      const a = document.createElement("a");
+      a.href = modelUrl;
+      a.download = "model.glb";
+      a.click();
+      return;
+    }
+
+    if (activeMeshRef.current) {
+      const exporter = new GLTFExporter();
+      exporter.parse(
+        activeMeshRef.current,
+        (gltf) => {
+          const blob = new Blob([gltf as ArrayBuffer], { type: "application/octet-stream" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = `${visionOutput?.objectName || "3d_model"}_6view.glb`;
+          link.click();
+        },
+        (err) => console.error("GLTF Export Error:", err),
+        { binary: true }
+      );
+    }
   };
 
-  const isComplete = phase === "complete" && (modelUrl || sketchfabEmbedUrl);
-  const isGenerating = phase === "generating";
-
-  // Determines whether Sketchfab view should be visible
+  const isComplete = phase === "complete";
+  const isGenerating = phase === "generating" || phase === "analyzing";
   const isSketchfabVisible = Boolean(sketchfabEmbedUrl && effectiveSource === "sketchfab" && !isGenerating);
 
   return (
@@ -264,35 +464,10 @@ export default function ThreeDViewer({
         style={{ background: "linear-gradient(to bottom, rgba(8,11,20,0.95) 0%, transparent 100%)" }}
       >
         <div className="flex items-center gap-2">
-          {sketchfabEmbedUrl ? (
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900/80 border border-white/10 backdrop-blur-md">
-              <button
-                onClick={() => handleSourceChange("sketchfab")}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  isSketchfabVisible
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
-                    : "text-slate-300 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                <span>📦 Sketchfab DB 모델</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  handleSourceChange("ai");
-                  if (!modelUrl && onGenerateAiModel) {
-                    onGenerateAiModel();
-                  }
-                }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  !isSketchfabVisible
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
-                    : "text-slate-300 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                <Sparkles size={12} className="text-amber-400" />
-                <span>{modelUrl ? "✨ AI 생성 3D 모델" : "✨ AI로 새로 생성하기"}</span>
-              </button>
+          {hasPhotos ? (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>📸 6면 포토그래메트리 3D 실물 모형</span>
             </div>
           ) : (
             <>
@@ -301,7 +476,7 @@ export default function ThreeDViewer({
                 style={{ background: isComplete ? "#10b981" : isGenerating ? "#f59e0b" : "#475569" }}
               />
               <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
-                {isComplete ? "AI 3D 모델 준비됨" : isGenerating ? "AI 3D 모델 생성 중..." : "대화 완료 시 3D 생성"}
+                {isComplete ? "고화질 3D 모델 준비됨" : isGenerating ? "3D 공간 계산 중..." : "사진 업로드 시 3D 생성"}
               </span>
             </>
           )}
@@ -309,73 +484,43 @@ export default function ThreeDViewer({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
-          {isSketchfabVisible ? (
-            <a
-              href={sketchfabViewerUrl || sketchfabEmbedUrl?.replace("/embed?autostart=1&autospin=0.5&ui_theme=dark&ui_infos=0&ui_controls=0&ui_watermark=0", "").replace("https://sketchfab.com/models/", "https://sketchfab.com/3d-models/")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-primary py-1.5 px-3 text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-500/20"
+          {onLoadSample && !isComplete && !hasPhotos && (
+            <button
+              className="btn-ghost py-1.5 px-3 text-xs"
+              onClick={onLoadSample}
+              style={{ background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.3)" }}
             >
+              샘플 3D 미리보기
+            </button>
+          )}
+          <button
+            className={`btn-ghost py-1.5 px-2.5 text-xs flex items-center gap-1.5 ${showLightControls ? "bg-indigo-600/30 text-indigo-300 border-indigo-500/50" : ""}`}
+            onClick={() => setShowLightControls(!showLightControls)}
+            title="조명 및 음영 조절"
+          >
+            <Sun size={14} />
+            <span>조명 조절</span>
+          </button>
+          <button className="btn-ghost py-1.5 px-2.5 cursor-pointer" onClick={handleReset} title="뷰 초기화">
+            <RotateCcw size={14} />
+          </button>
+          {isComplete && (
+            <button className="btn-primary py-1.5 px-3 text-xs flex items-center gap-1 cursor-pointer shadow-lg shadow-indigo-500/20" onClick={handleDownload}>
               <Download size={13} />
-              <span>3D 파일 다운로드</span>
-            </a>
-          ) : (
-            <>
-              {onLoadSample && !isComplete && (
-                <button
-                  className="btn-ghost py-1.5 px-3 text-xs"
-                  onClick={onLoadSample}
-                  style={{ background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.3)" }}
-                >
-                  샘플 3D 미리보기
-                </button>
-              )}
-              <button
-                className={`btn-ghost py-1.5 px-2.5 text-xs flex items-center gap-1.5 ${showLightControls ? "bg-indigo-600/30 text-indigo-300 border-indigo-500/50" : ""}`}
-                onClick={() => setShowLightControls(!showLightControls)}
-                title="조명 및 음영 조절"
-              >
-                <Sun size={14} />
-                <span>조명 조절</span>
-              </button>
-              <button className="btn-ghost py-1.5 px-2.5" onClick={handleReset} title="뷰 초기화">
-                <RotateCcw size={14} />
-              </button>
-              {isComplete && modelUrl && (
-                <button className="btn-primary py-1.5 px-3 text-xs" onClick={handleDownload}>
-                  <Download size={12} />
-                  GLB 다운로드
-                </button>
-              )}
-            </>
+              <span>GLB 3D 파일 다운로드</span>
+            </button>
           )}
         </div>
       </div>
 
-      {/* Choice Pending Overlay when user has not yet chosen in ChatPanel */}
-      {activeModelSource === null && sketchfabEmbedUrl && !isGenerating && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 p-6 text-center bg-slate-950/85 backdrop-blur-md animate-fade-in">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-indigo-500/20 border border-indigo-500/30">
-            <Sparkles size={24} className="text-amber-400 animate-pulse" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-200">3D 모델 준비 완료!</p>
-            <p className="text-xs text-slate-400 mt-1 max-w-xs leading-relaxed">
-              왼쪽 대화창에서 원하시는 3D 방식을 선택하시면 즉시 화면에 표시됩니다 💬
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Lighting Control Panel Drawer */}
+      {/* Lighting Control Drawer */}
       {!isSketchfabVisible && showLightControls && (
         <div className="absolute top-14 right-4 z-30 p-3.5 rounded-xl border border-indigo-500/30 bg-slate-950/90 backdrop-blur-md shadow-2xl text-xs space-y-3 w-64 animate-fade-in">
           <div className="flex items-center justify-between font-semibold text-indigo-300 pb-1.5 border-b border-white/10">
             <span>💡 3D 조명 및 음영 조절</span>
-            <button onClick={() => setShowLightControls(false)} className="text-slate-400 hover:text-white">✕</button>
+            <button onClick={() => setShowLightControls(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
           </div>
 
-          {/* Preset Buttons */}
           <div className="space-y-1">
             <label className="text-[11px] text-slate-400">조명 프리셋</label>
             <div className="grid grid-cols-2 gap-1.5">
@@ -388,11 +533,10 @@ export default function ThreeDViewer({
                 <button
                   key={p.id}
                   onClick={() => setLightPreset(p.id as any)}
-                  className={`py-1 px-2 rounded text-[11px] font-medium border transition-all ${
-                    lightPreset === p.id
+                  className={`py-1 px-2 rounded text-[11px] font-medium border transition-all cursor-pointer ${lightPreset === p.id
                       ? "bg-indigo-600 text-white border-indigo-400"
                       : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
-                  }`}
+                    }`}
                 >
                   {p.label}
                 </button>
@@ -400,7 +544,6 @@ export default function ThreeDViewer({
             </div>
           </div>
 
-          {/* Brightness Slider */}
           <div className="space-y-1">
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-400">조명 밝기</span>
@@ -417,7 +560,6 @@ export default function ThreeDViewer({
             />
           </div>
 
-          {/* Shadow Opacity Slider */}
           <div className="space-y-1">
             <div className="flex justify-between text-[11px]">
               <span className="text-slate-400">바닥 그림자 강도</span>
@@ -436,7 +578,7 @@ export default function ThreeDViewer({
         </div>
       )}
 
-      {/* LAYER 1: Sketchfab iframe Container (Kept mounted in DOM, toggled via CSS) */}
+      {/* LAYER 1: Sketchfab iframe Container */}
       {sketchfabEmbedUrl && (
         <div className={`absolute inset-0 w-full h-full ${isSketchfabVisible ? "block" : "hidden"}`}>
           <iframe
@@ -452,7 +594,7 @@ export default function ThreeDViewer({
         </div>
       )}
 
-      {/* LAYER 2: Three.js Canvas Container (Kept mounted in DOM, toggled via CSS) */}
+      {/* LAYER 2: Three.js Canvas Container */}
       <div className={`absolute inset-0 w-full h-full ${!isSketchfabVisible ? "block" : "hidden"}`}>
         <ThreeErrorBoundary onReset={handleReset}>
           <Canvas
@@ -462,7 +604,6 @@ export default function ThreeDViewer({
               antialias: true,
               alpha: true,
               powerPreference: "high-performance",
-              failIfMajorPerformanceCaveat: false,
             }}
             onCreated={({ gl }) => {
               const canvas = gl.domElement;
@@ -476,18 +617,13 @@ export default function ThreeDViewer({
             }}
             style={{ background: "transparent" }}
           >
-            {/* Dynamic 360-Degree Lighting Setup */}
             <ambientLight intensity={lightPreset === "flat" ? brightness * 1.5 : brightness * 0.9} />
-            
-            {/* Main Key Light */}
             <directionalLight
               position={[5, 8, 5]}
               intensity={brightness * (lightPreset === "flat" ? 0.4 : 1.4)}
               castShadow={shadowOpacity > 0}
               shadow-mapSize={[1024, 1024]}
             />
-
-            {/* Front & Rear Fill Lights (Lift dark shadows from back & sides) */}
             <directionalLight
               position={[-5, -4, -5]}
               intensity={brightness * (lightPreset === "flat" ? 1.0 : 0.7)}
@@ -498,8 +634,6 @@ export default function ThreeDViewer({
               intensity={brightness * 0.5}
               color={lightPreset === "bright" ? "#e0e7ff" : "#ffffff"}
             />
-
-            {/* Soft Colored Accent Lights */}
             <pointLight
               position={[-4, 3, -4]}
               intensity={brightness * 0.6}
@@ -513,14 +647,20 @@ export default function ThreeDViewer({
 
             {/* Model or Placeholder */}
             <Suspense fallback={isGenerating ? <LoadingOverlay progress={generationProgress} /> : <GLBLoadingFallback />}>
-              {isComplete && modelUrl ? (
+              {hasPhotos && (effectiveSource === "photo_box" || !modelUrl || modelUrl.includes("sample-shoe")) ? (
+                <TextureMappedBoxMesh
+                  multiViewImages={multiViewImages}
+                  imageBase64={imageBase64}
+                  visionOutput={visionOutput}
+                  onMeshReady={(mesh) => { activeMeshRef.current = mesh; }}
+                />
+              ) : isComplete && modelUrl && !modelUrl.includes("sample-shoe") ? (
                 <GLBModel url={modelUrl} />
               ) : (
                 <PlaceholderMesh phase={phase} />
               )}
             </Suspense>
 
-            {/* Contact shadows */}
             {shadowOpacity > 0 && (
               <ContactShadows
                 position={[0, -1.2, 0]}
@@ -532,7 +672,6 @@ export default function ThreeDViewer({
               />
             )}
 
-            {/* Controls */}
             <OrbitControls
               ref={controlsRef}
               enablePan={false}
@@ -546,7 +685,6 @@ export default function ThreeDViewer({
         </ThreeErrorBoundary>
       </div>
 
-      {/* Bottom hint */}
       <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none z-10">
         <span
           className="text-xs px-3 py-1 rounded-full"
