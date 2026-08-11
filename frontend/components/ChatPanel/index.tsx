@@ -10,7 +10,7 @@ interface ChatPanelProps {
   isAnalyzing?: boolean;
   sketchfabModelName?: string;
   showChoice?: boolean;
-  activeModelSource?: "sketchfab" | "ai" | null;
+  activeModelSource?: "sketchfab" | "ai" | "photo_box" | null;
   onSelectSketchfab?: () => void;
   onSelectAiGen?: () => void;
 }

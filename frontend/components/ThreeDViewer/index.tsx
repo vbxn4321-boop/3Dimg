@@ -193,7 +193,7 @@ function createCroppedTexture(
         cCtx.imageSmoothingEnabled = true;
         cCtx.imageSmoothingQuality = "high";
         cCtx.drawImage(img, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
-        texture.image = croppedCanvas;
+        texture.image = croppedCanvas as any;
         texture.needsUpdate = true;
       }
     } catch {
