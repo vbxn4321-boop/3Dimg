@@ -10,7 +10,7 @@ import {
   Center,
 } from "@react-three/drei";
 import * as THREE from "three";
-import { GLTFExporter } from "three-stdlib";
+import { GLTFExporter, RoundedBoxGeometry } from "three-stdlib";
 import { Download, RotateCcw, Sun, AlertTriangle, Sparkles } from "lucide-react";
 import type { VisionAgentOutput } from "@/lib/types/agentSchema";
 
@@ -209,17 +209,96 @@ function createCroppedTexture(
   return tex;
 }
 
+/** 이미지 알파 채널에서 2D 실루엣 윤곽선 Shape 생성 함수 */
+function extractContourShape(
+  dataUrl: string | null,
+  targetWidth: number,
+  targetHeight: number,
+  samples: number = 64
+): THREE.Shape | null {
+  if (!dataUrl) return null;
+
+  try {
+    const img = new Image();
+    img.src = dataUrl;
+    if (!img.width || !img.height) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+
+    ctx.drawImage(img, 0, 0, 128, 128);
+    const imgData = ctx.getImageData(0, 0, 128, 128);
+    const data = imgData.data;
+
+    const points: Array<{ x: number; y: number }> = [];
+    const centerX = 64;
+    const centerY = 64;
+
+    for (let i = 0; i < samples; i++) {
+      const angle = (i / samples) * Math.PI * 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+
+      let foundR = 0;
+      for (let r = 0; r < 64; r++) {
+        const px = Math.round(centerX + cos * r);
+        const py = Math.round(centerY + sin * r);
+
+        if (px < 0 || px >= 128 || py < 0 || py >= 128) break;
+        const alpha = data[(py * 128 + px) * 4 + 3];
+        if (alpha > 30) {
+          foundR = r;
+        }
+      }
+
+      if (foundR < 5) foundR = 45;
+
+      const normX = (cos * foundR) / 64;
+      const normY = -(sin * foundR) / 64; // Invert Y for Three.js
+      points.push({
+        x: normX * (targetWidth / 2),
+        y: normY * (targetHeight / 2),
+      });
+    }
+
+    if (points.length < 3) return null;
+
+    const shape = new THREE.Shape();
+    shape.moveTo(points[0].x, points[0].y);
+
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i];
+      const p2 = points[(i + 1) % points.length];
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      shape.quadraticCurveTo(p1.x, p1.y, midX, midY);
+    }
+    shape.closePath();
+    return shape;
+  } catch (err) {
+    console.warn("Contour shape extraction failed:", err);
+    return null;
+  }
+}
+
 // ----- Seamless Solid 3D Product Mesh Generator -----
-/** 6개 사진 텍스처를 유격과 구멍 없이 3D 실물 모형으로 이어서 입히는 고화질 3D 메쉬 생성기 */
+/** 6개 사진 텍스처를 유격과 구멍 없이 3D 실물 모형으로 이어서 입히는 고화질 3D 메쉬 생성기 (곡면/베벨/원통/알파실루엣 지원) */
 function TextureMappedBoxMesh({
   multiViewImages,
   imageBase64,
   visionOutput,
+  overrideShapeType,
+  overrideBevelRadius,
   onMeshReady,
 }: {
   multiViewImages?: Array<{ view: string; base64: string; mimeType: string }>;
   imageBase64?: string | null;
   visionOutput?: VisionAgentOutput | null;
+  overrideShapeType?: string | null;
+  overrideBevelRadius?: number | null;
   onMeshReady?: (mesh: THREE.Mesh) => void;
 }) {
   const meshRef = useRef<THREE.Mesh>(null!);
@@ -231,6 +310,9 @@ function TextureMappedBoxMesh({
   const w = Math.max(0.4, bounds?.aspectWidth ?? 1.0);
   const h = Math.max(0.4, bounds?.aspectHeight ?? 1.2);
   const d = Math.max(0.2, bounds?.aspectDepth ?? 0.4);
+
+  const shapeType = (overrideShapeType || bounds?.shapeType || "rounded_box").toLowerCase();
+  const bevelRadius = overrideBevelRadius ?? bounds?.bevelRadius ?? 0.08;
 
   const loader = useMemo(() => new THREE.TextureLoader(), []);
 
@@ -263,14 +345,36 @@ function TextureMappedBoxMesh({
       return new THREE.MeshStandardMaterial({
         color: "#ffffff",
         map: tex,
-        transparent: false,
+        transparent: true,
+        alphaTest: 0.15,
+        depthWrite: true,
         roughness: 0.25,
         metalness: 0.05,
         side: THREE.DoubleSide,
       });
     };
 
-    // Three.js BoxGeometry face mapping:
+    if (shapeType === "extruded_polygon") {
+      const frontMat = makeFaceMat(frontData, "front");
+      const sideMat = new THREE.MeshStandardMaterial({
+        color: primaryColor || "#f8fafc",
+        roughness: 0.2,
+        metalness: 0.05,
+        side: THREE.DoubleSide,
+      });
+      return [frontMat, sideMat];
+    } else if (shapeType === "cylinder") {
+      // Cylinder: 0: Side, 1: Top, 2: Bottom
+      return [
+        makeFaceMat(frontData, "front"),
+        makeFaceMat(topData, "top"),
+        makeFaceMat(bottomData, "bottom"),
+      ];
+    } else if (shapeType === "sphere") {
+      return makeFaceMat(frontData, "front");
+    }
+
+    // Three.js BoxGeometry & RoundedBoxGeometry face mapping:
     // 0: Right (+X), 1: Left (-X), 2: Top (+Y), 3: Bottom (-Y), 4: Front (+Z), 5: Back (-Z)
     return [
       makeFaceMat(rightData, "right"),
@@ -280,7 +384,38 @@ function TextureMappedBoxMesh({
       makeFaceMat(frontData, "front"),
       makeFaceMat(backData, "back"),
     ];
-  }, [frontData, backData, leftData, rightData, topData, bottomData, primaryColor, loader, tightCrops]);
+  }, [frontData, backData, leftData, rightData, topData, bottomData, primaryColor, loader, tightCrops, shapeType]);
+
+  const geometry = useMemo(() => {
+    if (shapeType === "extruded_polygon") {
+      const shape = extractContourShape(frontData, w, h);
+      if (shape) {
+        return new THREE.ExtrudeGeometry(shape, {
+          depth: d,
+          bevelEnabled: true,
+          bevelThickness: Math.min(w, h) * 0.08,
+          bevelSize: Math.min(w, h) * 0.08,
+          bevelSegments: 8,
+        });
+      }
+    }
+    if (shapeType === "cylinder") {
+      const radius = Math.max(w, d) / 2;
+      return new THREE.CylinderGeometry(radius, radius, h, 64);
+    }
+    if (shapeType === "sphere") {
+      const radius = Math.max(w, h, d) / 2;
+      return new THREE.SphereGeometry(radius, 64, 64);
+    }
+    if (shapeType === "box" || bevelRadius <= 0) {
+      return new THREE.BoxGeometry(w, h, d);
+    }
+
+    // rounded_box / rounded_prism: Rounded corners & smoothed edges
+    const maxRadius = Math.min(w, h, d) * 0.35;
+    const computedRadius = Math.min(maxRadius, Math.max(0.005, Math.min(w, h, d) * bevelRadius));
+    return new RoundedBoxGeometry(w, h, d, 4, computedRadius);
+  }, [w, h, d, shapeType, bevelRadius, frontData]);
 
   React.useEffect(() => {
     if (meshRef.current && onMeshReady) {
@@ -290,9 +425,7 @@ function TextureMappedBoxMesh({
 
   return (
     <Center top>
-      <mesh ref={meshRef} material={materials} castShadow receiveShadow>
-        <boxGeometry args={[w, h, d]} />
-      </mesh>
+      <mesh ref={meshRef} geometry={geometry} material={materials} castShadow receiveShadow />
     </Center>
   );
 }
@@ -400,6 +533,11 @@ export default function ThreeDViewer({
   const [brightness, setBrightness] = useState<number>(1.3);
   const [shadowOpacity, setShadowOpacity] = useState<number>(0.25);
   const [showLightControls, setShowLightControls] = useState<boolean>(false);
+
+  // 3D Shape & Bevel Radius Overrides
+  const [overrideShape, setOverrideShape] = useState<"rounded_box" | "box" | "cylinder" | "sphere" | null>(null);
+  const [overrideBevel, setOverrideBevel] = useState<number | null>(null);
+
   const controlsRef = useRef<any>(null);
   const activeMeshRef = useRef<THREE.Mesh | null>(null);
 
@@ -575,6 +713,56 @@ export default function ThreeDViewer({
               className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
             />
           </div>
+
+          <div className="space-y-1.5 pt-2 border-t border-white/10">
+            <label className="text-[11px] text-indigo-300 font-semibold flex items-center gap-1">
+              <span>📐 3D 형상 & 곡면 스타일</span>
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {[
+                { id: "extruded_polygon", label: "✨ 실루엣 3D" },
+                { id: "rounded_box", label: "🧊 둥근 박스" },
+                { id: "box", label: "📦 직육면체" },
+                { id: "cylinder", label: "🥫 원통형" },
+                { id: "sphere", label: "🔮 구형" },
+              ].map((s) => {
+                const activeShape = (overrideShape || visionOutput?.parametricBounds?.shapeType || "rounded_box").toLowerCase();
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setOverrideShape(s.id as any)}
+                    className={`py-1 px-2 rounded text-[11px] font-medium border transition-all cursor-pointer ${
+                      activeShape === s.id
+                        ? "bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-500/30"
+                        : "bg-white/5 text-slate-300 border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {(overrideShape === "rounded_box" || (!overrideShape && ((visionOutput?.parametricBounds?.shapeType as any) === "rounded_box" || !visionOutput?.parametricBounds?.shapeType))) && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-slate-400">모서리 둥글기 (Bevel)</span>
+                <span className="text-indigo-400 font-mono">
+                  {Math.round((overrideBevel ?? visionOutput?.parametricBounds?.bevelRadius ?? 0.08) * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.0"
+                max="0.25"
+                step="0.01"
+                value={overrideBevel ?? visionOutput?.parametricBounds?.bevelRadius ?? 0.08}
+                onChange={(e) => setOverrideBevel(parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -652,6 +840,8 @@ export default function ThreeDViewer({
                   multiViewImages={multiViewImages}
                   imageBase64={imageBase64}
                   visionOutput={visionOutput}
+                  overrideShapeType={overrideShape}
+                  overrideBevelRadius={overrideBevel}
                   onMeshReady={(mesh) => { activeMeshRef.current = mesh; }}
                 />
               ) : isComplete && modelUrl && !modelUrl.includes("sample-shoe") ? (

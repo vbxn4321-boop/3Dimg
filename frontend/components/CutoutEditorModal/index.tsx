@@ -9,7 +9,7 @@ interface CutoutEditorModalProps {
   originalImageUrl: string;
   currentCutoutUrl: string;
   onClose: () => void;
-  onSave: (editedBase64: string, previewUrl: string) => void;
+  onSave: (editedBase64: string, previewUrl: string, autoAnalyze?: boolean) => void;
 }
 
 export default function CutoutEditorModal({
@@ -315,14 +315,14 @@ export default function CutoutEditorModal({
     }
   };
 
-  // Save edited cutout
-  const handleSave = () => {
+  // Save edited cutout (autoAnalyze: false = save only, true = save & trigger 3D analysis)
+  const handleSave = (autoAnalyze: boolean = false) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const dataUrl = canvas.toDataURL("image/png");
     const base64 = dataUrl.split(",")[1];
-    onSave(base64, dataUrl);
+    onSave(base64, dataUrl, autoAnalyze);
     onClose();
   };
 
@@ -513,7 +513,7 @@ export default function CutoutEditorModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-white/10 bg-slate-900/90">
+        <div className="flex items-center justify-between px-5 py-3 border-t border-white/10 bg-slate-900/90 gap-2">
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-medium border border-white/10 hover:bg-white/5 text-slate-300 transition-all cursor-pointer"
@@ -521,13 +521,26 @@ export default function CutoutEditorModal({
             취소
           </button>
 
-          <button
-            onClick={handleSave}
-            className="px-5 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/25 flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <Check size={14} />
-            <span>편집 완료 & 3D 반영</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 1. 저장만 하기 버튼 */}
+            <button
+              onClick={() => handleSave(false)}
+              className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+              title="편집된 누끼 이미지를 슬롯에 저장만 하고 3D 분석을 진행하지 않습니다"
+            >
+              <span>💾 수정 내용만 저장</span>
+            </button>
+
+            {/* 2. 저장 & 3D 재분석 반영 버튼 */}
+            <button
+              onClick={() => handleSave(true)}
+              className="px-4 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/25 flex items-center gap-1.5 transition-all cursor-pointer"
+              title="편집된 누끼 이미지를 저장하고 3D 공간 분석 파이프라인을 즉시 재실행합니다"
+            >
+              <Check size={14} />
+              <span>✨ 저장 & 3D 재분석</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

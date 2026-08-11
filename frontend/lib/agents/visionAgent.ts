@@ -17,7 +17,8 @@ CRITICAL INSTRUCTIONS:
 1. **Tight Crop Bounding Boxes (tightCrops)**: For EACH view, detect the tight bounding box [minX, minY, maxX, maxY] in normalized 0.0-1.0 coordinates that contains ONLY the main product object.
    - EXCLUDE any human hands, fingers, desk surfaces, or background padding.
 2. **3D Aspect Ratios**: Compute the exact X (aspectWidth), Y (aspectHeight), Z (aspectDepth) 3D scale ratios across all views.
-3. **Corner Curvature (bevelRadius)**: Estimate the rounded corner curvature radius (e.g. 0.15 for AirPods case, 0.05 for wallet, 0.0 for sharp box).
+3. **3D Geometric Shape (shapeType)**: Identify object shape: "rounded_box" (smartphones, cosmetic cases, rounded boxes), "cylinder" (cans, bottles, cups, tubes), "sphere" (balls, spheres), or "box" (sharp square boxes).
+4. **Corner Curvature (bevelRadius)**: Estimate the rounded corner curvature radius (e.g. 0.15 for AirPods case, 0.05 for wallet, 0.0 for sharp box).
 
 Return JSON matching this EXACT schema:
 {
@@ -26,7 +27,7 @@ Return JSON matching this EXACT schema:
   "estimatedColors": ["#ffffff"],
   "confidence": 0.95,
   "parametricBounds": {
-    "shapeType": "box",
+    "shapeType": "rounded_box",
     "aspectWidth": 1.0,
     "aspectHeight": 1.2,
     "aspectDepth": 0.4,
@@ -119,6 +120,11 @@ async function callVisionLLM(input: VisionAgentInput): Promise<VisionAgentOutput
       const rawD = Math.max(0.1, Number(parsed.parametricBounds?.aspectDepth ?? parsed.aspectDepth) || 0.4);
       const maxDim = Math.max(rawW, rawH, rawD);
 
+      const shapeTypeRaw = (parsed.parametricBounds?.shapeType || parsed.shapeType || "rounded_box").toLowerCase();
+      const validShape = ["rounded_box", "box", "cylinder", "sphere", "rounded_prism", "extruded_polygon"].includes(shapeTypeRaw)
+        ? shapeTypeRaw
+        : "rounded_box";
+
       const output: VisionAgentOutput = {
         objectName: parsed.objectName || "3D 아이템",
         primaryMaterial: parsed.primaryMaterial || "플라스틱",
@@ -128,11 +134,11 @@ async function callVisionLLM(input: VisionAgentInput): Promise<VisionAgentOutput
         confidence: Number(parsed.confidence) || 0.95,
         rawDescription: `${parsed.objectName || "3D 아이템"} 포토그래메트리 정밀 크롭 분석 완료`,
         parametricBounds: {
-          shapeType: "box",
+          shapeType: validShape as any,
           aspectWidth: rawW / maxDim,
           aspectHeight: rawH / maxDim,
           aspectDepth: rawD / maxDim,
-          bevelRadius: Number(parsed.parametricBounds?.bevelRadius) || 0.1,
+          bevelRadius: Number(parsed.parametricBounds?.bevelRadius) ?? 0.08,
         },
         tightCrops: parsed.tightCrops || {},
       };

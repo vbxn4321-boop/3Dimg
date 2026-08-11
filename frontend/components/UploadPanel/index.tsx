@@ -283,30 +283,32 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
   };
 
   // Handle slot mode cutout edit save
-  const handleSlotEditedSave = (editedBase64: string, previewUrl: string) => {
+  const handleSlotEditedSave = (editedBase64: string, previewUrl: string, autoAnalyze: boolean = false) => {
     if (!editingSlotKey) return;
     const nextSlots = viewSlots.map((slot) =>
       slot.key === editingSlotKey
-        ? { ...slot, base64: editedBase64, processedPreview: previewUrl }
+        ? { ...slot, base64: editedBase64, processedPreview: previewUrl, status: "ready" as const }
         : slot
     );
     setViewSlots(nextSlots);
     setEditingSlotKey(null);
 
-    // 수정한 누끼 이미지를 상위 page.tsx 및 3D 뷰어로 즉시 반영
-    const frontSlot = nextSlots.find((s) => s.key === "front");
-    if (frontSlot && frontSlot.base64) {
-      const multiViewPayload = nextSlots
-        .filter((s) => s.base64)
-        .map((s) => ({ view: s.key, base64: s.base64!, mimeType: s.mimeType }));
+    // autoAnalyze가 true인 경우에만 3D 공간 분석 파이프라인 재실행
+    if (autoAnalyze) {
+      const frontSlot = nextSlots.find((s) => s.key === "front");
+      if (frontSlot && frontSlot.base64) {
+        const multiViewPayload = nextSlots
+          .filter((s) => s.base64)
+          .map((s) => ({ view: s.key, base64: s.base64!, mimeType: s.mimeType }));
 
-      onImageReady(
-        frontSlot.base64,
-        frontSlot.mimeType || "image/png",
-        true,
-        frontSlot.processedPreview || frontSlot.originalPreview || "",
-        multiViewPayload
-      );
+        onImageReady(
+          frontSlot.base64,
+          frontSlot.mimeType || "image/png",
+          true,
+          frontSlot.processedPreview || frontSlot.originalPreview || "",
+          multiViewPayload
+        );
+      }
     }
   };
 
