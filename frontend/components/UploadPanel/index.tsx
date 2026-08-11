@@ -277,7 +277,7 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       frontSlot.base64,
       frontSlot.mimeType || "image/png",
       true,
-      frontSlot.processedPreview,
+      frontSlot.processedPreview || frontSlot.originalPreview || "",
       multiViewPayload
     );
   };
@@ -304,7 +304,7 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
         frontSlot.base64,
         frontSlot.mimeType || "image/png",
         true,
-        frontSlot.processedPreview,
+        frontSlot.processedPreview || frontSlot.originalPreview || "",
         multiViewPayload
       );
     }
