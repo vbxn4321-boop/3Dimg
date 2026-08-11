@@ -137,34 +137,36 @@ export default function CutoutEditorModal({
 
   // Initialize Canvas with Original and Current Cutout images
   useEffect(() => {
-    if (!isOpen || !originalImageUrl || !currentCutoutUrl) return;
+    if (!isOpen || (!originalImageUrl && !currentCutoutUrl)) return;
 
     setIsLoaded(false);
     setHistory([]);
 
-    const canvas = canvasRef.current;
-    const origCanvas = origCanvasRef.current;
-    if (!canvas || !origCanvas) return;
-
-    const ctx = canvas.getContext("2d");
-    const origCtx = origCanvas.getContext("2d");
-    if (!ctx || !origCtx) return;
+    const origSrc = originalImageUrl || currentCutoutUrl;
+    const cutoutSrc = currentCutoutUrl || originalImageUrl;
 
     const origImg = new Image();
-    origImg.crossOrigin = "anonymous";
-    origImg.src = originalImageUrl;
-
     const cutoutImg = new Image();
-    cutoutImg.crossOrigin = "anonymous";
-    cutoutImg.src = currentCutoutUrl;
+
+    // Only set crossOrigin for external http/https URLs, NEVER for data: or blob: URLs
+    if (origSrc.startsWith("http")) origImg.crossOrigin = "anonymous";
+    if (cutoutSrc.startsWith("http")) cutoutImg.crossOrigin = "anonymous";
 
     let loadedCount = 0;
-    const onImgLoad = () => {
+    const handleReady = () => {
       loadedCount++;
       if (loadedCount < 2) return;
 
-      const w = origImg.naturalWidth || 800;
-      const h = origImg.naturalHeight || 800;
+      const canvas = canvasRef.current;
+      const origCanvas = origCanvasRef.current;
+      if (!canvas || !origCanvas) return;
+
+      const ctx = canvas.getContext("2d");
+      const origCtx = origCanvas.getContext("2d");
+      if (!ctx || !origCtx) return;
+
+      const w = origImg.naturalWidth || cutoutImg.naturalWidth || 800;
+      const h = origImg.naturalHeight || cutoutImg.naturalHeight || 800;
 
       canvas.width = w;
       canvas.height = h;
@@ -173,20 +175,30 @@ export default function CutoutEditorModal({
 
       // Draw original image on offscreen origCanvas
       origCtx.clearRect(0, 0, w, h);
-      origCtx.drawImage(origImg, 0, 0, w, h);
+      origCtx.drawImage(origImg.complete && origImg.naturalWidth ? origImg : cutoutImg, 0, 0, w, h);
 
       // Draw current cutout on main interactive canvas
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(cutoutImg, 0, 0, w, h);
+      ctx.drawImage(cutoutImg.complete && cutoutImg.naturalWidth ? cutoutImg : origImg, 0, 0, w, h);
 
       // Save initial state to history
-      const initialData = ctx.getImageData(0, 0, w, h);
-      setHistory([initialData]);
+      try {
+        const initialData = ctx.getImageData(0, 0, w, h);
+        setHistory([initialData]);
+      } catch {
+        // Fallback
+      }
       setIsLoaded(true);
     };
 
-    origImg.onload = onImgLoad;
-    cutoutImg.onload = onImgLoad;
+    origImg.onload = handleReady;
+    origImg.onerror = handleReady;
+
+    cutoutImg.onload = handleReady;
+    cutoutImg.onerror = handleReady;
+
+    origImg.src = origSrc;
+    cutoutImg.src = cutoutSrc;
   }, [isOpen, originalImageUrl, currentCutoutUrl]);
 
   // Helper to save current canvas state to history undo stack

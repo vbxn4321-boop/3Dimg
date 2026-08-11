@@ -285,13 +285,29 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
   // Handle slot mode cutout edit save
   const handleSlotEditedSave = (editedBase64: string, previewUrl: string) => {
     if (!editingSlotKey) return;
-    setViewSlots((prev) =>
-      prev.map((slot) =>
-        slot.key === editingSlotKey
-          ? { ...slot, base64: editedBase64, processedPreview: previewUrl }
-          : slot
-      )
+    const nextSlots = viewSlots.map((slot) =>
+      slot.key === editingSlotKey
+        ? { ...slot, base64: editedBase64, processedPreview: previewUrl }
+        : slot
     );
+    setViewSlots(nextSlots);
+    setEditingSlotKey(null);
+
+    // 수정한 누끼 이미지를 상위 page.tsx 및 3D 뷰어로 즉시 반영
+    const frontSlot = nextSlots.find((s) => s.key === "front");
+    if (frontSlot && frontSlot.base64) {
+      const multiViewPayload = nextSlots
+        .filter((s) => s.base64)
+        .map((s) => ({ view: s.key, base64: s.base64!, mimeType: s.mimeType }));
+
+      onImageReady(
+        frontSlot.base64,
+        frontSlot.mimeType || "image/png",
+        true,
+        frontSlot.processedPreview,
+        multiViewPayload
+      );
+    }
   };
 
   const activeEditingSlot = viewSlots.find((s) => s.key === editingSlotKey);
@@ -305,8 +321,15 @@ export default function UploadPanel({ onImageReady, isProcessing }: UploadPanelP
       {activeEditingSlot && (
         <CutoutEditorModal
           isOpen={Boolean(editingSlotKey)}
-          originalImageUrl={activeEditingSlot.originalPreview ?? activeEditingSlot.processedPreview!}
-          currentCutoutUrl={activeEditingSlot.processedPreview!}
+          originalImageUrl={
+            activeEditingSlot.originalPreview ||
+            activeEditingSlot.processedPreview ||
+            (activeEditingSlot.base64 ? `data:${activeEditingSlot.mimeType || "image/png"};base64,${activeEditingSlot.base64}` : "")
+          }
+          currentCutoutUrl={
+            activeEditingSlot.processedPreview ||
+            (activeEditingSlot.base64 ? `data:${activeEditingSlot.mimeType || "image/png"};base64,${activeEditingSlot.base64}` : "")
+          }
           onClose={() => setEditingSlotKey(null)}
           onSave={handleSlotEditedSave}
         />
