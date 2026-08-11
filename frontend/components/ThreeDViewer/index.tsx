@@ -188,11 +188,46 @@ function createCroppedTexture(
       const croppedCanvas = document.createElement("canvas");
       croppedCanvas.width = cropW;
       croppedCanvas.height = cropH;
-      const cCtx = croppedCanvas.getContext("2d");
+      const cCtx = croppedCanvas.getContext("2d", { willReadFrequently: true });
       if (cCtx) {
         cCtx.imageSmoothingEnabled = true;
         cCtx.imageSmoothingQuality = "high";
         cCtx.drawImage(img, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+
+        try {
+          const imgData = cCtx.getImageData(0, 0, cropW, cropH);
+          const data = imgData.data;
+
+          // Calculate average color of non-transparent product pixels
+          let sumR = 0, sumG = 0, sumB = 0, count = 0;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] > 100) {
+              sumR += data[i];
+              sumG += data[i + 1];
+              sumB += data[i + 2];
+              count++;
+            }
+          }
+
+          const bgR = count > 0 ? Math.round(sumR / count) : 255;
+          const bgG = count > 0 ? Math.round(sumG / count) : 255;
+          const bgB = count > 0 ? Math.round(sumB / count) : 255;
+
+          // Fill transparent corner padding with opaque body color so 3D mesh corners don't get cut out
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 120) {
+              data[i] = bgR;
+              data[i + 1] = bgG;
+              data[i + 2] = bgB;
+              data[i + 3] = 255;
+            }
+          }
+
+          cCtx.putImageData(imgData, 0, 0);
+        } catch {
+          // Fallback if canvas is tainted
+        }
+
         texture.image = croppedCanvas as any;
         texture.needsUpdate = true;
       }
@@ -345,9 +380,7 @@ function TextureMappedBoxMesh({
       return new THREE.MeshStandardMaterial({
         color: "#ffffff",
         map: tex,
-        transparent: true,
-        alphaTest: 0.15,
-        depthWrite: true,
+        transparent: false,
         roughness: 0.25,
         metalness: 0.05,
         side: THREE.DoubleSide,
