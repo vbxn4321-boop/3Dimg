@@ -19,7 +19,7 @@ export function createCroppedTexture(
     if (!img || !img.width || !img.height) return;
 
     try {
-      // 1. 알파 채널 기반 물체 본체의 정밀 Bounding Box 자동 감지
+      // 1. 알파 채널 및 배경색 기반 정밀 Bounding Box 자동 감지 (Auto-Crop)
       const canvas = document.createElement("canvas");
       canvas.width = img.width;
       canvas.height = img.height;
