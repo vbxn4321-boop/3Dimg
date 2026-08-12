@@ -29,10 +29,12 @@ Return JSON matching this EXACT schema:
 Respond ONLY with valid JSON. No markdown code blocks.`;
 
 export async function POST(request: NextRequest) {
+  let userPrompt = "";
   try {
     const { prompt, model: requestedModel } = await request.json();
+    userPrompt = prompt || "";
 
-    if (!prompt) {
+    if (!userPrompt) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
@@ -107,7 +109,7 @@ export async function POST(request: NextRequest) {
     console.warn("[Text-to-3D API] AI model quota/call failed, using smart local fallback:", error);
     
     // 텍스트 기반 스마트 형태/비율 로컬 추론
-    const p = prompt.toLowerCase();
+    const p = userPrompt.toLowerCase();
     let shapeType = "box";
     let w = 1.0, h = 1.0, d = 1.0;
     let color = "#3b82f6";

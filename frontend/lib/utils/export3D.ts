@@ -80,6 +80,7 @@ export function exportToSTL(objects: SceneObject[], filename = 'scene.stl') {
   const group = buildSceneGroup(objects);
   const exporter = new STLExporter();
   const result = exporter.parse(group, { binary: true }) as DataView;
-  const blob = new Blob([result], { type: 'application/octet-stream' });
+  const buffer = result.buffer as ArrayBuffer;
+  const blob = new Blob([buffer], { type: 'application/octet-stream' });
   download(blob, filename);
 }
