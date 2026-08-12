@@ -6,12 +6,14 @@ import { exportToGLTF, exportToOBJ, exportToSTL } from '@/lib/utils/export3D';
 import { generate3DFromPrompt } from '@/lib/utils/smart3DGenerator';
 import { createParametricGeometry } from '@/lib/utils/parametricMeshGenerator';
 import { bufferGeometryToData } from '@/lib/utils/smart3DGenerator';
-import { ChevronDown, Box, Cylinder, Circle, MessageSquare, Sparkles } from 'lucide-react';
+import { ChevronDown, Box, Cylinder, Circle, MessageSquare, Sparkles, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import HelpModal from './HelpModal';
 
 export default function MenuBar() {
   const { objects, clearAllObjects, addObject, isChatOpen, toggleChatOpen } = useEditorStore();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const addPrimitive = (shapeType: 'box' | 'cylinder' | 'sphere') => {
     const geom = createParametricGeometry({
@@ -54,23 +56,23 @@ export default function MenuBar() {
             className={`px-3 py-1.5 rounded-lg transition-all ${activeMenu === 'file' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'hover:bg-gray-800/60 hover:text-white'}`}
             onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
           >
-            File
+            파일
           </button>
           
           <AnimatePresence>
             {activeMenu === 'file' && (
               <motion.div 
                 initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={{ duration: 0.15 }}
-                className="absolute top-full left-0 mt-1.5 w-52 bg-[#161922] border border-gray-800 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden"
+                className="absolute top-full left-0 mt-1.5 w-60 bg-[#161922] border border-gray-800 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden"
               >
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToGLTF(objects); setActiveMenu(null); }}>Export as .GLB</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToOBJ(objects); setActiveMenu(null); }}>Export as .OBJ</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToSTL(objects); setActiveMenu(null); }}>Export as .STL</div>
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToGLTF(objects); setActiveMenu(null); }}>.GLB 3D 모델 내보내기</div>
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToOBJ(objects); setActiveMenu(null); }}>.OBJ 3D 모델 내보내기</div>
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer transition-colors" onClick={() => { exportToSTL(objects); setActiveMenu(null); }}>.STL 3D 모델 내보내기 (3D 프린팅)</div>
                 <div className="h-px bg-gray-800/80 my-1" />
                 <div className="px-4 py-2 hover:bg-red-500/20 hover:text-red-400 text-red-400/90 cursor-pointer transition-colors" onClick={() => { 
-                  if(confirm('Clear entire scene?')) clearAllObjects(); 
+                  if(confirm('전체 장면을 초기화하시겠습니까?')) clearAllObjects(); 
                   setActiveMenu(null); 
-                }}>Clear Entire Scene</div>
+                }}>전체 장면 초기화</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -82,7 +84,7 @@ export default function MenuBar() {
             className={`px-3 py-1.5 rounded-lg transition-all ${activeMenu === 'add' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'hover:bg-gray-800/60 hover:text-white'}`}
             onClick={() => setActiveMenu(activeMenu === 'add' ? null : 'add')}
           >
-            Add Primitive
+            도형 추가
           </button>
           
           <AnimatePresence>
@@ -92,19 +94,34 @@ export default function MenuBar() {
                 className="absolute top-full left-0 mt-1.5 w-48 bg-[#161922] border border-gray-800 rounded-xl shadow-2xl py-1.5 z-50 overflow-hidden"
               >
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center space-x-2.5 transition-colors" onClick={() => addPrimitive('box')}>
-                  <Box size={15} className="text-blue-400" /> <span>Box</span>
+                  <Box size={15} className="text-blue-400" /> <span>상자 (Box)</span>
                 </div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center space-x-2.5 transition-colors" onClick={() => addPrimitive('sphere')}>
-                  <Circle size={15} className="text-indigo-400" /> <span>Sphere</span>
+                  <Circle size={15} className="text-indigo-400" /> <span>구체 (Sphere)</span>
                 </div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center space-x-2.5 transition-colors" onClick={() => addPrimitive('cylinder')}>
-                  <Cylinder size={15} className="text-purple-400" /> <span>Cylinder</span>
+                  <Cylinder size={15} className="text-purple-400" /> <span>원기둥 (Cylinder)</span>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Right Side: Help Guide Button */}
+      <div className="ml-auto flex items-center space-x-2">
+        <button
+          onClick={() => setIsHelpOpen(true)}
+          className="flex items-center space-x-1.5 px-3 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/40 rounded-lg text-xs font-semibold transition-all hover:scale-105 shadow-sm"
+          title="사용 가이드 및 단축키"
+        >
+          <HelpCircle size={14} />
+          <span>사용법 가이드</span>
+        </button>
+      </div>
+
+      {/* Help Modal */}
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
 
       {/* Invisible backdrop to close menus */}
       {activeMenu && (

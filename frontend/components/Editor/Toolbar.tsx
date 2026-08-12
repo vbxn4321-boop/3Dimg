@@ -9,9 +9,9 @@ export default function Toolbar() {
   const { transformMode, setTransformMode } = useEditorStore();
 
   const modes = [
-    { id: 'translate', icon: Move, label: 'Move (이동)' },
-    { id: 'rotate', icon: RotateCcw, label: 'Rotate (회전)' },
-    { id: 'scale', icon: Maximize, label: 'Scale (크기)' },
+    { id: 'translate', icon: Move, label: '이동 (Move)' },
+    { id: 'rotate', icon: RotateCcw, label: '회전 (Rotate)' },
+    { id: 'scale', icon: Maximize, label: '크기 (Scale)' },
   ] as const;
 
   return (
@@ -33,7 +33,9 @@ export default function Toolbar() {
           title={mode.label}
         >
           <mode.icon size={15} strokeWidth={2.2} />
-          <span className="font-mono text-[11px]">{mode.id.toUpperCase()}</span>
+          <span className="font-sans text-[11px] font-bold">
+            {mode.id === 'translate' ? '이동' : mode.id === 'rotate' ? '회전' : '크기'}
+          </span>
         </button>
       ))}
     </motion.div>

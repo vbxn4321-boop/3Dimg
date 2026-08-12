@@ -97,10 +97,10 @@ export default function ChatSidebar() {
         animate={{ x: 0, opacity: 1 }}
         onClick={toggleChatOpen}
         className="absolute left-0 top-20 bg-[#0f1117]/90 hover:bg-[#161922] backdrop-blur-xl border border-l-0 border-gray-800/80 px-3 py-2.5 rounded-r-xl shadow-2xl text-blue-400 hover:text-white z-30 transition-all flex items-center space-x-2 border-blue-500/30 group"
-        title="Open AI Assistant"
+        title="AI 대화창 열기"
       >
         <Sparkles size={16} className="group-hover:rotate-12 transition-transform" />
-        <span className="text-xs font-semibold">AI Chat</span>
+        <span className="text-xs font-semibold">AI 대화</span>
       </motion.button>
     );
   }
@@ -120,15 +120,15 @@ export default function ChatSidebar() {
             <Sparkles size={15} />
           </div>
           <div>
-            <h2 className="text-xs font-bold text-gray-100">AI Assistant</h2>
-            <p className="text-[10px] text-gray-400">Text-to-3D Generator</p>
+            <h2 className="text-xs font-bold text-gray-100">AI 3D 어시스턴트</h2>
+            <p className="text-[10px] text-gray-400">텍스트 기반 3D 모델 생성기</p>
           </div>
         </div>
 
         <button
           onClick={toggleChatOpen}
           className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded-lg transition-colors"
-          title="Close AI Panel"
+          title="AI 대화창 닫기"
         >
           <ChevronLeft size={16} />
         </button>
@@ -172,7 +172,7 @@ export default function ChatSidebar() {
           <div className="flex justify-start">
             <div className="bg-gray-900/90 border border-gray-800 text-gray-300 px-3.5 py-2.5 rounded-2xl rounded-bl-xs flex items-center space-x-2.5">
               <Loader2 size={16} className="animate-spin text-blue-400" />
-              <span className="text-xs font-medium">Generating 3D mesh with AI...</span>
+              <span className="text-xs font-medium">AI가 3D 모델을 생성 중입니다...</span>
             </div>
           </div>
         )}
@@ -186,7 +186,7 @@ export default function ChatSidebar() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
-            placeholder="Describe a 3D object to generate..."
+            placeholder="생성할 3D 모델을 설명하세요... (예: 아이폰, 나무 의자)"
             className="flex-1 bg-transparent text-gray-100 text-xs focus:outline-none px-2 py-1 placeholder-gray-500 font-medium"
             disabled={isGenerating}
           />
